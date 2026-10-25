@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build unsigned APK
+        run: nix build .#droid-nix-app -L
+
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space for the cross toolchain
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build bootstrap zip (cross-compiled for aarch64)
+        run: nix build .#bootstrap-aarch64 -L
+      - name: Evaluate the on-device template configuration
+        run: nix build .#checks.x86_64-linux.template -L
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: actionlint
+        run: nix run nixpkgs#actionlint
