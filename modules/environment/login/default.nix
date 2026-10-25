@@ -37,10 +37,9 @@ in
 
       prootStatic = mkOption {
         type = types.package;
-        # A store path string becomes a package via builtins.storePath, so
-        # on-device evaluation needs --impure (the droid-nix CLI passes it).
-        # The bootstrap sets the real derivation instead.
-        default = import ./proot-static-path.nix;
+        # Set to bootstrap/proot.nix by the bootstrap and by
+        # lib.droidNixConfiguration, so that on-device generations refer to
+        # the proot store path the bootstrap ships.
         internal = true;
         description = "<literal>proot-static</literal> package.";
       };

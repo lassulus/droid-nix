@@ -43,8 +43,7 @@ jobs:
           if-no-files-found: error
 
   build-bootstrap:
-    # Cross-compiles from x86_64; the pinned proot-static path in
-    # modules/environment/login/proot-static-path.nix depends on that.
+    # proot is cross-compiled from x86_64-linux, see bootstrap/proot.nix.
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space for the cross toolchain

@@ -1,8 +1,9 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-# The aarch64 bootstrap zip, cross-compiled from nativeSystem.
+# The aarch64 bootstrap zip, assembled on nativeSystem. Its packages come from
+# the aarch64-linux nixpkgs binary cache, except proot (see proot.nix).
 { nixpkgs
-, nativeSystem  # system to cross-compile from
+, nativeSystem  # system to assemble the bootstrap on
 , droidNixFlakeURL ? null
 }:
 
@@ -32,7 +33,6 @@ let
       # Fix invoking bash after initial build.
       user.shell = "${initialPackageInfo.bash}/bin/bash";
 
-      # The real derivation instead of the pinned path, see bootstrap.nix.
       environment.files.prootStatic = customPkgs.prootTermux;
 
       build.flake.droid-nix = urlOptionValue droidNixFlakeURL "DROID_NIX_FLAKE_URL";
@@ -50,8 +50,7 @@ let
   customPkgs = {
     bootstrap = callPackage ./bootstrap.nix { };
     bootstrapZip = callPackage ./bootstrap-zip.nix { };
-    prootTermux = callPackage ./cross-compiling/proot-termux.nix { };
-    tallocStatic = callPackage ./cross-compiling/talloc-static.nix { };
+    prootTermux = import ./proot.nix { inherit nixpkgs; };
   };
 in
 

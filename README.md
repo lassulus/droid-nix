@@ -48,13 +48,15 @@ the executables and symlinks for the app to restore.
 nix build .#bootstrap-aarch64   # result/bootstrap-aarch64.zip
 ```
 
-The bootstrap is cross-compiled from x86_64-linux with the `nixpkgs-for-bootstrap`
-input. That input is pinned to the same nixpkgs commit as upstream
-Nix-on-Droid (49ee0e94, nixos-24.05 as of 2024-07-06). On-device generations
-refer to proot by a store path pinned in
-`modules/environment/login/proot-static-path.nix`. The bootstrap build fails if
-that path differs from the proot it ships, for example after bumping
-`nixpkgs-for-bootstrap` or building on another platform.
+The bootstrap is built with the `nixpkgs-for-bootstrap` input, pinned to the
+same nixpkgs commit as upstream Nix-on-Droid (49ee0e94, nixos-24.05 as of
+2024-07-06). Nix, bash and cacert are the aarch64-linux packages from
+cache.nixos.org. proot is termux's fork, cross-compiled from x86_64-linux with
+gcc as a static musl binary (`pkgsCross.aarch64-multiplatform-musl.pkgsStatic`,
+see `bootstrap/proot.nix`). On-device generations refer to proot by the store
+path of that same expression: the device only evaluates it and finds it in the
+store the bootstrap shipped. Bumping `nixpkgs-for-bootstrap` changes that path,
+and existing devices cannot build the new one themselves.
 
 The app data path (`/data/data/us.lassul.droidnix`) and the package id are
 defined once on the Nix side, in `android-app.nix`.

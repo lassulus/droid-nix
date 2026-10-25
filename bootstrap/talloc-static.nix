@@ -1,17 +1,14 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ callPackage
+# Only libtalloc.a, without the python bindings and docs of nixpkgs' talloc.
+{ stdenv
 , fetchurl
 , python3
 , pkg-config
 , wafHook
 }:
 
-let
-  pkgsCross = callPackage ./cross-pkgs.nix { };
-in
-
-pkgsCross.stdenv.mkDerivation rec {
+stdenv.mkDerivation rec {
   pname = "talloc";
   version = "2.4.2";
 
@@ -66,7 +63,7 @@ pkgsCross.stdenv.mkDerivation rec {
   buildPhase = "python ./buildtools/bin/waf build || true";
   installPhase = ''
     mkdir -p $out/lib $out/include
-    ${pkgsCross.stdenv.cc.targetPrefix}ar q $out/lib/libtalloc.a \
+    ${stdenv.cc.targetPrefix}ar q $out/lib/libtalloc.a \
         bin/default/talloc.c.[0-9]*.o
     cp talloc.h $out/include/
   '';

@@ -1,20 +1,6 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ lib, runCommand, nixDirectory, prootTermux, bash, pkgs, config, initialPackageInfo }:
-
-let
-  pinnedProotStatic = import ../modules/environment/login/proot-static-path.nix;
-in
-
-# On-device generations refer to proot-termux by a pinned store path, which
-# only exists on the device because the bootstrap ships it.
-assert lib.assertMsg (pinnedProotStatic == "${prootTermux}") ''
-  modules/environment/login/proot-static-path.nix pins
-    ${pinnedProotStatic}
-  but the bootstrap ships
-    ${prootTermux}
-  Update the pinned path.
-'';
+{ runCommand, nixDirectory, prootTermux, bash, pkgs, config, initialPackageInfo }:
 
 runCommand "bootstrap" { } ''
   mkdir --parents $out/{.l2s,bin,dev/shm,etc,root,tmp,usr/{bin,lib}}
