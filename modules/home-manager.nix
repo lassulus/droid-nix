@@ -7,13 +7,18 @@ with lib;
 let
   cfg = config.home-manager;
 
-  extendedLib = import (home-manager-path + "/modules/lib/stdlib-extended.nix") lib;
+  # droid-nix has no home-manager input, users bring their own.
+  hmPath =
+    if home-manager-path != null then home-manager-path
+    else throw "home-manager.config is set, pass `home-manager-path = home-manager.outPath;` to droid-nix.lib.droidNixConfiguration";
+
+  extendedLib = import (hmPath + "/modules/lib/stdlib-extended.nix") lib;
 
   hmModule = types.submoduleWith {
     specialArgs = { lib = extendedLib; } // cfg.extraSpecialArgs;
     modules = [
       ({ name, ... }: {
-        imports = import (home-manager-path + "/modules/modules.nix") {
+        imports = import (hmPath + "/modules/modules.nix") {
           inherit pkgs;
           lib = extendedLib;
           useNixpkgsModule = !cfg.useGlobalPkgs;
@@ -88,7 +93,7 @@ in
         installation of user packages through the
         <option>environment.packages</option> option.
       '' // {
-        default = versionAtLeast config.system.stateVersion "20.09";
+        default = true;
       };
     };
 

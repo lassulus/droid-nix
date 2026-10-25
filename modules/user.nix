@@ -1,6 +1,6 @@
 # Copyright (c) 2019-2022, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, androidApp, ... }:
 
 with lib;
 
@@ -28,7 +28,7 @@ in
     user = {
       group = mkOption {
         type = types.str;
-        default = "nix-on-droid";
+        default = "droid-nix";
         description = "Group name.";
       };
 
@@ -56,7 +56,7 @@ in
 
       userName = mkOption {
         type = types.str;
-        default = "nix-on-droid";
+        default = "droid-nix";
         description = "User name.";
       };
 
@@ -90,7 +90,7 @@ in
     };
 
     user = {
-      home = "/data/data/com.termux.nix/files/home";
+      home = "${androidApp.dataDir}/files/home";
     };
 
   };

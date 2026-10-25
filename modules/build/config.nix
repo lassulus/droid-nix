@@ -1,6 +1,6 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ config, lib, pkgs, ... }:
+{ lib, androidApp, ... }:
 
 with lib;
 
@@ -43,7 +43,7 @@ with lib;
 
   config = {
 
-    build.installationDir = "/data/data/com.termux.nix/files/usr";
+    build.installationDir = "${androidApp.dataDir}/files/usr";
 
   };
 

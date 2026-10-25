@@ -7,7 +7,7 @@ PATH=@coreutils@/bin:@nix@/bin:${PATH:+:}$PATH
 set -eu
 set -o pipefail
 
-PROFILE_DIRECTORY="/nix/var/nix/profiles/nix-on-droid"
+PROFILE_DIRECTORY="/nix/var/nix/profiles/droid-nix"
 
 function errorEcho() {
     >&2 echo "$@"
@@ -17,22 +17,14 @@ function setupPasstroughOpts() {
     if [[ -v VERBOSE ]]; then
         PASSTHROUGH_OPTS+=(--show-trace)
     fi
-
-    if [[ -n "$CONFIG_FILE" ]]; then
-        PASSTHROUGH_OPTS+=(--argstr config "$(realpath "$CONFIG_FILE")")
-    fi
 }
 
 function nixActivationPackage() {
     local command="$1"
     local extraArgs=("${@:2}"
-                     --extra-experimental-features nix-command
-                     "${PASSTHROUGH_OPTS[@]}")
-    if [[ -n "${FLAKE_CONFIG_URI}" ]]; then
-        extraArgs+=(--impure "${FLAKE_CONFIG_URI}.activationPackage")
-    else
-        extraArgs+=(--file "<nix-on-droid/modules>" activationPackage)
-    fi
+                     --extra-experimental-features "flakes nix-command"
+                     "${PASSTHROUGH_OPTS[@]}"
+                     --impure "${FLAKE_CONFIG_URI}.activationPackage")
 
     nix "${command}" "${extraArgs[@]}"
 }
@@ -55,13 +47,12 @@ function doHelp() {
     echo "  -h|--help         Print this help"
     echo "  -n|--dry-run      Do a dry run, only prints what actions would be taken"
     echo "  -v|--verbose      Verbose output"
-    echo "  -f|--file FILE    Path to config file"
     echo "  -F|--flake FLAKE  Path to flake and device name (e.g. path/to/flake#device),"
-    echo "                    device 'default' will be used if no attribute name is given"
+    echo "                    device 'default' will be used if no attribute name is given,"
+    echo "                    defaults to ~/.config/droid-nix"
     echo
     echo "Options passed on to nix build"
     echo
-    echo "  -I|--include PATH"
     echo "  --builders BUILDERS"
     echo "  --cores NUM"
     echo "  --keep-failed"
@@ -87,19 +78,7 @@ function doHelp() {
     echo "                  Switch generation and activate configuration"
 }
 
-function doOnDeviceTest() {
-    nix-channel --update nix-on-droid
-    exec "$(nix-instantiate --eval --expr \
-                            "<nix-on-droid/tests/on-device/.run.sh>")" "$@"
-}
-
 function doSwitch() {
-    if [[ -e "$HOME/.config/nix-on-droid/flake.nix" && -z "${FLAKE_CONFIG_URI}" ]]; then
-        echo -n '~/.config/nix-on-droid/flake.nix exists, '
-        echo -n "you might've intended to run "
-        echo '`nix-on-droid switch --flake ~/.config/nix-on-droid`'
-    fi
-
     echo "Building activation package..."
     nixActivationPackage build --no-link
 
@@ -117,7 +96,7 @@ function doSwitchGeneration() {
         "${PROFILE_DIRECTORY}-${generationNum}-link/activate"
     else
         errorEcho "Activation was not successful, generation is either broken or already garbage collected."
-        errorEcho "See 'nix-on-droid generations' for available generations."
+        errorEcho "See 'droid-nix generations' for available generations."
         exit 1
     fi
 }
@@ -125,40 +104,23 @@ function doSwitchGeneration() {
 
 COMMAND_ARGS=()
 COMMAND=
-CONFIG_FILE=
-FLAKE_CONFIG_URI=
+FLAKE="$HOME/.config/droid-nix"
 PASSTHROUGH_OPTS=()
 
 while [[ $# -gt 0 ]]; do
     opt="$1"
     shift
     case $opt in
-        build|generations|help|rollback|switch|switch-generation|on-device-test)
+        build|generations|help|rollback|switch|switch-generation)
             COMMAND="$opt"
             ;;
-        -f|--file)
-            CONFIG_FILE="$1"
-            shift
-            ;;
         -F|--flake)
-            PASSTHROUGH_OPTS+=(--extra-experimental-features "flakes nix-command")
-            # add "nixOnDroidConfigurations." as prefix in attribute name, e.g.
-            # /path/to/flake#device -> /path/to/flake#nixOnDroidConfigurations.device
-            # if no attribute name given, use "default"
-            if [[ "$1" =~ \# ]]; then
-                FLAKE_CONFIG_URI="${1%#*}#nixOnDroidConfigurations.${1#*#}"
-            else
-                FLAKE_CONFIG_URI="${1}#nixOnDroidConfigurations.default"
-            fi
+            FLAKE="$1"
             shift
             ;;
         -h|--help)
             doHelp
             exit 0
-            ;;
-        -I|--include)
-            PASSTHROUGH_OPTS+=(-I "$1")
-            shift
             ;;
         -n|--dry-run)
             export DRY_RUN=1
@@ -179,7 +141,7 @@ while [[ $# -gt 0 ]]; do
             ;;
             *)
                 case $COMMAND in
-                    switch-generation|on-device-test)
+                    switch-generation)
                         COMMAND_ARGS+=("$opt")
                         ;;
                     *)
@@ -191,6 +153,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# add "droidNixConfigurations." as prefix in attribute name, e.g.
+# /path/to/flake#device -> /path/to/flake#droidNixConfigurations.device
+# if no attribute name given, use "default"
+if [[ "$FLAKE" =~ \# ]]; then
+    FLAKE_CONFIG_URI="${FLAKE%#*}#droidNixConfigurations.${FLAKE#*#}"
+else
+    FLAKE_CONFIG_URI="${FLAKE}#droidNixConfigurations.default"
+fi
 
 setupPasstroughOpts
 
@@ -209,14 +180,11 @@ case $COMMAND in
     help)
         doHelp
         ;;
-    on-device-test)
-        doOnDeviceTest "${COMMAND_ARGS[@]}"
-        ;;
     rollback)
-        if [[ $(readlink $PROFILE_DIRECTORY) =~ ^nix-on-droid-([0-9]+)-link$ ]]; then
+        if [[ $(readlink $PROFILE_DIRECTORY) =~ ^droid-nix-([0-9]+)-link$ ]]; then
             doSwitchGeneration $((BASH_REMATCH[1] - 1))
         else
-            errorEcho "Nix-on-Droid profile link is broken, please run 'nix-on-droid switch' to fix it."
+            errorEcho "droid-nix profile link is broken, please run 'droid-nix switch' to fix it."
             exit 1
         fi
         ;;

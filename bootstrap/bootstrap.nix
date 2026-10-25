@@ -1,6 +1,20 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ runCommand, nixDirectory, prootTermux, bash, pkgs, config, initialPackageInfo }:
+{ lib, runCommand, nixDirectory, prootTermux, bash, pkgs, config, initialPackageInfo }:
+
+let
+  pinnedProotStatic = import ../modules/environment/login/proot-static-path.nix;
+in
+
+# On-device generations refer to proot-termux by a pinned store path, which
+# only exists on the device because the bootstrap ships it.
+assert lib.assertMsg (pinnedProotStatic == "${prootTermux}") ''
+  modules/environment/login/proot-static-path.nix pins
+    ${pinnedProotStatic}
+  but the bootstrap ships
+    ${prootTermux}
+  Update the pinned path.
+'';
 
 runCommand "bootstrap" { } ''
   mkdir --parents $out/{.l2s,bin,dev/shm,etc,root,tmp,usr/{bin,lib}}
@@ -10,7 +24,7 @@ runCommand "bootstrap" { } ''
   cp --recursive ${nixDirectory}/var $out/nix/var
   chmod --recursive u+w $out/nix
 
-  mkdir --parents $out/nix/var/nix/{profiles,gcroots}/per-user/nix-on-droid
+  mkdir --parents $out/nix/var/nix/{profiles,gcroots}/per-user/${config.user.userName}
 
   ln --symbolic ${initialPackageInfo.bash}/bin/sh $out/bin/sh
 

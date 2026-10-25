@@ -17,11 +17,11 @@ with lib;
 
     environment.etc = {
       "profile".text = ''
-        . "${config.build.sessionInit}/etc/profile.d/nix-on-droid-session-init.sh"
+        . "${config.build.sessionInit}/etc/profile.d/droid-nix-session-init.sh"
       '';
 
       "zshenv".text = ''
-        . "${config.build.sessionInit}/etc/profile.d/nix-on-droid-session-init.sh"
+        . "${config.build.sessionInit}/etc/profile.d/droid-nix-session-init.sh"
       '';
     };
 

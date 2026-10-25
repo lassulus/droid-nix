@@ -51,7 +51,7 @@ in
         nix_previous="$(command -v nix)"
 
         nix profile list \
-          | grep 'nix-on-droid-path$' \
+          | grep 'droid-nix-path$' \
           | cut -d ' ' -f 4 \
           | xargs -t $DRY_RUN_CMD nix profile remove $VERBOSE_ARG
 
@@ -65,7 +65,7 @@ in
 
     environment = {
       packages = [
-        (pkgs.callPackage ../../nix-on-droid { nix = config.nix.package; })
+        (pkgs.callPackage ../../pkgs/droid-nix { nix = config.nix.package; })
         pkgs.bashInteractive
         pkgs.cacert
         pkgs.coreutils
@@ -74,14 +74,14 @@ in
       ];
 
       path = pkgs.buildEnv {
-        name = "nix-on-droid-path";
+        name = "droid-nix-path";
 
         paths = cfg.packages;
 
         inherit (cfg) extraOutputsToInstall;
 
         meta = {
-          description = "Environment of packages installed through Nix-on-Droid.";
+          description = "Environment of packages installed through droid-nix.";
         };
       };
     };

@@ -1,20 +1,22 @@
 {
-  description = "Basic example of Nix-on-Droid system config.";
+  description = "droid-nix configuration";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    nix-on-droid = {
-      url = "github:nix-community/nix-on-droid/release-24.05";
+    droid-nix = {
+      url = "github:lassulus/droid-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, nix-on-droid }: {
+  outputs = { nixpkgs, droid-nix, ... }: {
 
-    nixOnDroidConfigurations.default = nix-on-droid.lib.nixOnDroidConfiguration {
+    droidNixConfigurations.default = droid-nix.lib.droidNixConfiguration {
       pkgs = import nixpkgs { system = "aarch64-linux"; };
-      modules = [ ./nix-on-droid.nix ];
+      modules = [ ./droid-nix.nix ];
+      # To use home-manager.config, add a home-manager input and pass
+      # home-manager-path = home-manager.outPath;
     };
 
   };

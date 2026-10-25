@@ -7,6 +7,7 @@
 , gnused
 , getopt
 , termux-am
+, androidApp
 }:
 
 stdenvNoCC.mkDerivation rec {
@@ -25,28 +26,28 @@ stdenvNoCC.mkDerivation rec {
   patches = [ ./termux-tools.patch ];
   postPatch = ''
     substituteInPlace scripts/termux-setup-storage.in \
-      --replace @TERMUX_HOME@ /data/data/com.termux.nix/files/home/ \
-      --replace @TERMUX_APP_PACKAGE@ com.termux.nix
+      --replace-quiet @TERMUX_HOME@ ${androidApp.dataDir}/files/home/ \
+      --replace-quiet @TERMUX_APP_PACKAGE@ ${androidApp.packageName}
     substituteInPlace scripts/termux-open.in \
-      --replace 'getopt ' '${getopt}/bin/getopt '
+      --replace-quiet 'getopt ' '${getopt}/bin/getopt '
     substituteInPlace \
       scripts/termux-open.in \
       scripts/termux-wake-lock.in \
       scripts/termux-wake-unlock.in \
-      --replace @TERMUX_APP_PACKAGE@.app com.termux.app \
-      --replace @TERMUX_APP_PACKAGE@ com.termux.nix
+      --replace-quiet @TERMUX_APP_PACKAGE@.app com.termux.app \
+      --replace-quiet @TERMUX_APP_PACKAGE@ ${androidApp.packageName}
     substituteInPlace scripts/termux-reload-settings.in \
-      --replace @TERMUX_APP_PACKAGE@ com.termux.nix
+      --replace-quiet @TERMUX_APP_PACKAGE@ ${androidApp.packageName}
     ${gnused}/bin/sed -i 's|^am |${termux-am}/bin/am |' scripts/*
 
     rm -r doc  # manpage is half misleading, pulling pandoc is not worth it
-    substituteInPlace Makefile.am --replace \
+    substituteInPlace Makefile.am --replace-quiet \
       'SUBDIRS = . scripts doc mirrors motds' \
       'SUBDIRS = . scripts'
-    substituteInPlace configure.ac --replace \
+    substituteInPlace configure.ac --replace-quiet \
       'AC_CONFIG_FILES([Makefile scripts/Makefile doc/Makefile' \
       'AC_CONFIG_FILES([Makefile scripts/Makefile])'
-    substituteInPlace configure.ac --replace \
+    substituteInPlace configure.ac --replace-quiet \
       'mirrors/Makefile motds/Makefile])' ""
   '';
 

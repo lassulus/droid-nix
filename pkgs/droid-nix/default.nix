@@ -3,15 +3,16 @@
 { bash, coreutils, lib, nix, runCommand }:
 
 runCommand
-  "nix-on-droid"
+  "droid-nix"
 {
   preferLocalBuild = true;
   allowSubstitutes = false;
+  meta.mainProgram = "droid-nix";
 }
   ''
-    install -D -m755  ${./nix-on-droid.sh} $out/bin/nix-on-droid
+    install -D -m755  ${./droid-nix.sh} $out/bin/droid-nix
 
-    substituteInPlace $out/bin/nix-on-droid \
+    substituteInPlace $out/bin/droid-nix \
       --subst-var-by bash "${bash}" \
       --subst-var-by coreutils "${coreutils}" \
       --subst-var-by nix "${nix}"

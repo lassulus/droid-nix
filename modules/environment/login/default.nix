@@ -1,6 +1,6 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ config, lib, pkgs, initialPackageInfo, targetSystem, ... }:
+{ config, lib, pkgs, initialPackageInfo, ... }:
 
 with lib;
 
@@ -10,7 +10,7 @@ let
   login = pkgs.callPackage ./login.nix { inherit config; };
 
   loginInner = pkgs.callPackage ./login-inner.nix {
-    inherit config initialPackageInfo targetSystem;
+    inherit config initialPackageInfo;
   };
 in
 
@@ -37,7 +37,10 @@ in
 
       prootStatic = mkOption {
         type = types.package;
-        readOnly = true;
+        # A store path string becomes a package via builtins.storePath, so
+        # on-device evaluation needs --impure (the droid-nix CLI passes it).
+        # The bootstrap sets the real derivation instead.
+        default = import ./proot-static-path.nix;
         internal = true;
         description = "<literal>proot-static</literal> package.";
       };
@@ -83,15 +86,6 @@ in
 
     environment.files = {
       inherit login loginInner;
-
-      prootStatic =
-        let
-          crossCompiledPaths = {
-            aarch64-linux = "/nix/store/dvf2ck9bkw7yyrlkjk87xz1anaxsgrd6-proot-termux-static-aarch64-unknown-linux-android-unstable-2026-02-20";
-            x86_64-linux = "/nix/store/w7fksni07fhss7hzkyf4knn5171prj88-proot-termux-static-x86_64-unknown-linux-android-unstable-2026-02-20";
-          };
-        in
-        "${crossCompiledPaths.${targetSystem}}";
     };
 
   };

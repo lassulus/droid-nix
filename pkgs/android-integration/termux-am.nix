@@ -1,9 +1,9 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ stdenv, fetchFromGitHub, cmake }:
+{ stdenv, fetchFromGitHub, cmake, androidApp }:
 
 let
-  appPath = "/data/data/com.termux.nix/files/apps/com.termux.nix";
+  appPath = "${androidApp.dataDir}/files/apps/${androidApp.packageName}";
   socketPath = "${appPath}/termux-am/am.sock";
 in
 stdenv.mkDerivation rec {
@@ -21,8 +21,8 @@ stdenv.mkDerivation rec {
     echo "#define SOCKET_PATH \"${socketPath}\"" > termux-am.h
     # Fix the bash link so that nix can patch it + path to termux-am-socket
     substituteInPlace termux-am.sh.in \
-      --replace @TERMUX_PREFIX@/bin/bash /bin/bash \
-      --replace \
+      --replace-quiet @TERMUX_PREFIX@/bin/bash /bin/bash \
+      --replace-quiet \
         "termux-am-socket \"\$am_command_string\"" \
         "$out/bin/termux-am-socket \"\$am_command_string\""
   '';

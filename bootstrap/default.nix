@@ -1,15 +1,13 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
+# The aarch64 bootstrap zip, cross-compiled from nativeSystem.
 { nixpkgs
-, system  # system to compile for, user-facing name of targetSystem
-, _nativeSystem ? null  # system to cross-compile from, see flake.nix
-, nixOnDroidChannelURL ? null
-, nixpkgsChannelURL ? null
-, nixOnDroidFlakeURL ? null
+, nativeSystem  # system to cross-compile from
+, droidNixFlakeURL ? null
 }:
 
 let
-  nativeSystem = if _nativeSystem == null then system else _nativeSystem;
+  system = "aarch64-linux"; # system to compile for
   nixDirectory = callPackage ./nix-directory.nix { inherit system; };
   initialPackageInfo = import "${nixDirectory}/nix-support/package-info.nix";
 
@@ -25,31 +23,19 @@ let
 
   modules = import ../modules {
     inherit pkgs;
-    targetSystem = system;
-
-    isFlake = true;
 
     config = {
       imports = [ ../modules/build/initial-build.nix ];
 
-      _module.args = {
-        inherit initialPackageInfo;
-        pkgs = pkgs.lib.mkForce pkgs; # to override ./modules/nixpkgs/config.nix
-      };
-
-      system.stateVersion = "24.05";
+      _module.args = { inherit initialPackageInfo; };
 
       # Fix invoking bash after initial build.
       user.shell = "${initialPackageInfo.bash}/bin/bash";
 
-      build = {
-        channel = {
-          nixpkgs = urlOptionValue nixpkgsChannelURL "NIXPKGS_CHANNEL_URL";
-          nix-on-droid = urlOptionValue nixOnDroidChannelURL "NIX_ON_DROID_CHANNEL_URL";
-        };
+      # The real derivation instead of the pinned path, see bootstrap.nix.
+      environment.files.prootStatic = customPkgs.prootTermux;
 
-        flake.nix-on-droid = urlOptionValue nixOnDroidFlakeURL "NIX_ON_DROID_FLAKE_URL";
-      };
+      build.flake.droid-nix = urlOptionValue droidNixFlakeURL "DROID_NIX_FLAKE_URL";
     };
   };
 
@@ -69,7 +55,4 @@ let
   };
 in
 
-{
-  inherit (modules) config;
-  inherit customPkgs;
-}
+customPkgs

@@ -1,0 +1,14 @@
+droid-nix contains code from other projects:
+
+- bootstrap/, modules/, pkgs/droid-nix/, pkgs/android-integration/ and
+  templates/ are derived from Nix-on-Droid
+  (https://github.com/nix-community/nix-on-droid, commit df611d5),
+  Copyright (c) 2019-2024 Alexander Sosedkin and other contributors listed
+  in AUTHORS, licensed under the MIT License, see LICENSE. Files carry their
+  original copyright headers.
+
+- app/patches modify Termux (https://github.com/termux/termux-app) and,
+  like Termux, are licensed under the GNU General Public License v3.0.
+  Several patches are based on nix-on-droid-app
+  (https://github.com/nix-community/nix-on-droid-app); their headers name
+  the original commits and authors.

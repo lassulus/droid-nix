@@ -11,17 +11,9 @@ with lib;
 
 let
   cfg = config.nix;
-  renameNixOpt = old: new:
-    (mkRenamedOptionModule [ "nix" old ] [ "nix" new ]);
 in
 
 {
-  # Backward-compatibility with the NixOS options.
-  imports = [
-    (renameNixOpt "binaryCaches" "substituters")
-    (renameNixOpt "binaryCachePublicKeys" "trustedPublicKeys")
-    (renameNixOpt "extraConfig" "extraOptions")
-  ];
 
   ###### interface
 
@@ -108,8 +100,8 @@ in
         type = types.listOf types.str;
         default = [ ];
         description = ''
-          A list of URLs of substituters.  The official NixOS and Nix-on-Droid
-          substituters are added by default.
+          A list of URLs of substituters.  The official NixOS substituter is
+          added by default.
         '';
       };
 
@@ -119,7 +111,7 @@ in
         description = ''
           A list of public keys.  When paths are copied from another Nix store (such as a
           binary cache), they must be signed with one of these keys.  The official NixOS
-          and Nix-on-Droid public keys are added by default.
+          public key is added by default.
         '';
       };
 
@@ -154,11 +146,9 @@ in
       nix = {
         substituters = [
           "https://cache.nixos.org"
-          "https://nix-on-droid.cachix.org"
         ];
         trustedPublicKeys = [
           "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-          "nix-on-droid.cachix.org-1:56snoMJTXmDRC1Ei24CmKoUqvHJ9XCp+nidK7qkMQrU="
         ];
       };
     }

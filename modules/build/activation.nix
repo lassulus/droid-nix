@@ -7,7 +7,7 @@ with lib;
 let
   cfg = config.build;
 
-  profileDirectory = "/nix/var/nix/profiles/nix-on-droid";
+  profileDirectory = "/nix/var/nix/profiles/droid-nix";
 
   # Programs that always should be available on the activation
   # script's PATH.
@@ -84,7 +84,7 @@ in
         default = { };
         type = types.attrs;
         description = ''
-          Activation scripts for the Nix-on-Droid environment.
+          Activation scripts for the droid-nix environment.
         '' + activationOptionDescriptionSuffix;
       };
 
@@ -92,7 +92,7 @@ in
         default = { };
         type = types.attrs;
         description = ''
-          Activation scripts for the Nix-on-Droid environment that
+          Activation scripts for the droid-nix environment that
           need to be run first.
         '' + activationOptionDescriptionSuffix;
       };
@@ -101,7 +101,7 @@ in
         default = { };
         type = types.attrs;
         description = ''
-          Activation scripts for the Nix-on-Droid environment that
+          Activation scripts for the droid-nix environment that
           need to be run last.
         '' + activationOptionDescriptionSuffix;
       };
@@ -124,7 +124,7 @@ in
         internal = true;
         description = ''
           Package containing the session-init script in
-          <code>/etc/profile.d/nix-on-droid-session-init.sh</code>.
+          <code>/etc/profile.d/droid-nix-session-init.sh</code>.
         '';
       };
     };
@@ -149,7 +149,7 @@ in
 
       activationPackage =
         pkgs.runCommand
-          "nix-on-droid-generation"
+          "droid-nix-generation"
           {
             preferLocalBuild = true;
             allowSubstitutes = false;
@@ -160,7 +160,7 @@ in
             cp ${activationScript} $out/activate
 
             ln --symbolic ${config.build.etc}/etc $out/etc
-            ln --symbolic ${config.environment.path} $out/nix-on-droid-path
+            ln --symbolic ${config.environment.path} $out/droid-nix-path
 
             ln --symbolic ${config.environment.files.login} $out/filesystem/bin/login
             ln --symbolic ${config.environment.files.loginInner} $out/filesystem/usr/lib/login-inner

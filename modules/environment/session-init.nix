@@ -11,26 +11,15 @@ let
 
   exportAll = vars: concatStringsSep "\n" (mapAttrsToList export vars);
 
-  addToNixPath = nixPathEntry: ''
-    if [[ ":$NIX_PATH:" != *":${nixPathEntry}:"* ]]; then
-      export NIX_PATH="${nixPathEntry}''${NIX_PATH:+:}$NIX_PATH"
-    fi
-  '';
-
   sessionInit = pkgs.writeTextFile {
-    name = "nix-on-droid-session-init.sh";
-    destination = "/etc/profile.d/nix-on-droid-session-init.sh";
+    name = "droid-nix-session-init.sh";
+    destination = "/etc/profile.d/droid-nix-session-init.sh";
     text = ''
       # Only source this once.
       [ -n "$__NOD_SESS_INIT_SOURCED" ] && return
       export __NOD_SESS_INIT_SOURCED=1
 
       . "${config.user.home}/.nix-profile/etc/profile.d/nix.sh"
-
-      # workaround for nix 2.4, see https://github.com/NixOS/nixpkgs/issues/149791
-      ${addToNixPath "${config.user.home}/.nix-defexpr/channels"}
-      # Workaround for https://github.com/NixOS/nix/issues/1865
-      ${addToNixPath "nixpkgs=${config.user.home}/.nix-defexpr/channels/nixpkgs/"}
 
       ${optionalString (config.home-manager.config != null) ''
         if [ -e "${config.user.home}/.nix-profile/etc/profile.d/hm-session-vars.sh" ]; then
@@ -52,12 +41,12 @@ in
     environment = {
       motd = mkOption {
         default = ''
-          Welcome to Nix-on-Droid!
-          If nothing works, open an issue at https://github.com/nix-community/nix-on-droid/issues or try the rescue shell.
+          Welcome to droid-nix!
+          If nothing works, open an issue at https://github.com/lassulus/droid-nix/issues or try the rescue shell.
         '';
         type = types.nullOr types.lines;
         description = ''
-          Text to show on every new shell created by Nix-on-Droid.
+          Text to show on every new shell created by droid-nix.
         '';
       };
 
