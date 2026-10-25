@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "nix-on-droid-app": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792938371,
+        "narHash": "sha256-wntKM9Z0rMMPLLUN3kFdrcGXxwzgZvNHv85Dv30IGtE=",
+        "ref": "rebase-termux",
+        "rev": "c02306940a10039b30ddafd4d0d42345eaee259d",
+        "revCount": 1541,
+        "type": "git",
+        "url": "file:///var/lib/hermes/workspace/nix-on-droid-app"
+      },
+      "original": {
+        "ref": "rebase-termux",
+        "type": "git",
+        "url": "file:///var/lib/hermes/workspace/nix-on-droid-app"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1792773339,
+        "narHash": "sha256-rZLrzrC6i+jnTAlvPZHogKDulY7WWDEv9hJeHieO7Zw=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nix-on-droid-app": "nix-on-droid-app",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
