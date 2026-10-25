@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zhaofeng Li <hello@zhaofeng.li>
+Date: Sun, 25 Oct 2026 16:11:33 +0100
+Subject: [PATCH 4/5] Set executable bits for files listed in EXECUTABLES.txt
+
+Zip entries carry no permissions and the Nix bootstrap does not follow
+Termux's bin/ and libexec/ layout, so it ships an EXECUTABLES.txt with
+the paths to make executable.
+
+Based on nix-on-droid-app commit b0578421 by Zhaofeng Li.
+---
+ .../main/java/com/termux/app/TermuxInstaller.java | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/app/src/main/java/com/termux/app/TermuxInstaller.java b/app/src/main/java/com/termux/app/TermuxInstaller.java
+index 7019af01..d2dde51d 100644
+--- a/app/src/main/java/com/termux/app/TermuxInstaller.java
++++ b/app/src/main/java/com/termux/app/TermuxInstaller.java
+@@ -175,6 +175,7 @@ final class TermuxInstaller {
+ 
+                     final byte[] buffer = new byte[8096];
+                     final List<Pair<String, String>> symlinks = new ArrayList<>(50);
++                    final List<String> executables = new ArrayList<>(128);
+ 
+                     try (ZipInputStream zipInput = new ZipInputStream(new URL(bootstrapUrl).openStream())) {
+                         ZipEntry zipEntry;
+@@ -196,6 +197,12 @@ final class TermuxInstaller {
+                                         return;
+                                     }
+                                 }
++                            } else if (zipEntry.getName().equals("EXECUTABLES.txt")) {
++                                BufferedReader executablesReader = new BufferedReader(new InputStreamReader(zipInput));
++                                String line;
++                                while ((line = executablesReader.readLine()) != null) {
++                                    executables.add(line);
++                                }
+                             } else {
+                                 String zipEntryName = zipEntry.getName();
+                                 File targetFile = new File(TERMUX_STAGING_PREFIX_DIR_PATH, zipEntryName);
+@@ -223,6 +230,14 @@ final class TermuxInstaller {
+                         }
+                     }
+ 
++                    // Zip entries carry no permissions, the bootstrap lists its executables instead.
++                    if (executables.isEmpty())
++                        throw new RuntimeException("No EXECUTABLES.txt encountered");
++                    for (String executable : executables) {
++                        //noinspection OctalInteger
++                        Os.chmod(TERMUX_STAGING_PREFIX_DIR_PATH + "/" + executable, 0700);
++                    }
++
+                     if (symlinks.isEmpty())
+                         throw new RuntimeException("No SYMLINKS.txt encountered");
+                     for (Pair<String, String> symlink : symlinks) {

@@ -1,0 +1,310 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alexander Sosedkin <monk@unboiled.info>
+Date: Sun, 25 Oct 2026 16:11:13 +0100
+Subject: [PATCH 3/5] Download the bootstrap zip from a URL
+
+droid-nix installs a Nix bootstrap instead of Termux's apt bootstrap, so
+nothing is embedded in the APK anymore. On first start the app asks for
+the URL of the bootstrap zip, prefilled with
+
+  https://github.com/lassulus/droid-nix/releases/latest/download/bootstrap-$ARCH.zip
+
+and streams it from there. The dialog takes the full zip URL, so any
+file name works for testing other bootstraps.
+
+This removes the termux-bootstrap native library (ndkBuild) and the
+gradle tasks that downloaded Termux's bootstrap zips at build time.
+
+Based on nix-on-droid-app commits 2d6c9b08 ("Allow specifying a custom
+bootstrap URL") by Alexander Sosedkin and fe6512ed ("build.gradle:
+Remove unused bootstrap download tasks") by Zhaofeng Li.
+---
+ app/build.gradle                              | 90 -------------------
+ app/src/main/cpp/Android.mk                   |  5 --
+ app/src/main/cpp/termux-bootstrap-zip.S       | 18 ----
+ app/src/main/cpp/termux-bootstrap.c           | 11 ---
+ .../java/com/termux/app/TermuxInstaller.java  | 54 ++++++++---
+ 5 files changed, 43 insertions(+), 135 deletions(-)
+ delete mode 100644 app/src/main/cpp/Android.mk
+ delete mode 100644 app/src/main/cpp/termux-bootstrap-zip.S
+ delete mode 100644 app/src/main/cpp/termux-bootstrap.c
+
+diff --git a/app/build.gradle b/app/build.gradle
+index a9fe1cd5..a8bd904c 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -62,12 +62,6 @@ android {
+         manifestPlaceholders.TERMUX_TASKER_APP_NAME = "Termux:Tasker"
+         manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "Termux:Widget"
+ 
+-        externalNativeBuild {
+-            ndkBuild {
+-                cFlags "-std=c11", "-Wall", "-Wextra", "-Werror", "-Os", "-fno-stack-protector", "-Wl,--gc-sections"
+-            }
+-        }
+-
+         splits {
+             abi {
+                 enable ((gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
+@@ -108,12 +102,6 @@ android {
+         targetCompatibility JavaVersion.VERSION_1_8
+     }
+ 
+-    externalNativeBuild {
+-        ndkBuild {
+-            path "src/main/cpp/Android.mk"
+-        }
+-    }
+-
+     lint {
+         disable 'ProtectedPermissions'
+     }
+@@ -165,81 +153,3 @@ def validateVersionName(String versionName) {
+     if (!java.util.regex.Pattern.matches("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?\$", versionName))
+         throw new GradleException("The versionName '"  + versionName + "' is not a valid version as per semantic version '2.0.0' spec in the format 'major.minor.patch(-prerelease)(+buildmetadata)'. https://semver.org/spec/v2.0.0.html.")
+ }
+-
+-def downloadBootstrap(String arch, String expectedChecksum, String version) {
+-    def digest = java.security.MessageDigest.getInstance("SHA-256")
+-
+-    def localUrl = "src/main/cpp/bootstrap-" + arch + ".zip"
+-    def file = new File(projectDir, localUrl)
+-    if (file.exists()) {
+-        def buffer = new byte[8192]
+-        def input = new FileInputStream(file)
+-        while (true) {
+-            def readBytes = input.read(buffer)
+-            if (readBytes < 0) break
+-            digest.update(buffer, 0, readBytes)
+-        }
+-        def checksum = new BigInteger(1, digest.digest()).toString(16)
+-        while (checksum.length() < 64) { checksum = "0" + checksum }
+-        if (checksum == expectedChecksum) {
+-            return
+-        } else {
+-            logger.quiet("Deleting old local file with wrong hash: " + localUrl + ": expected: " + expectedChecksum + ", actual: " + checksum)
+-            file.delete()
+-        }
+-    }
+-
+-    def remoteUrl = "https://github.com/termux/termux-packages/releases/download/bootstrap-" + version + "/bootstrap-" + arch + ".zip"
+-    logger.quiet("Downloading " + remoteUrl + " ...")
+-
+-    file.parentFile.mkdirs()
+-    def out = new BufferedOutputStream(new FileOutputStream(file))
+-
+-    def connection = new URL(remoteUrl).openConnection()
+-    connection.setInstanceFollowRedirects(true)
+-    def digestStream = new java.security.DigestInputStream(connection.inputStream, digest)
+-    out << digestStream
+-    out.close()
+-
+-    def checksum = new BigInteger(1, digest.digest()).toString(16)
+-    while (checksum.length() < 64) { checksum = "0" + checksum }
+-    if (checksum != expectedChecksum) {
+-        file.delete()
+-        throw new GradleException("Wrong checksum for " + remoteUrl + ": expected: " + expectedChecksum + ", actual: " + checksum)
+-    }
+-}
+-
+-clean {
+-    doLast {
+-        def tree = fileTree(new File(projectDir, 'src/main/cpp'))
+-        tree.include 'bootstrap-*.zip'
+-        tree.each { it.delete() }
+-    }
+-}
+-
+-task downloadBootstraps() {
+-    doLast {
+-        def packageVariant = project.ext.packageVariant
+-        if (packageVariant == "apt-android-7") {
+-            def version = "2026.02.12-r1" + "%2B" + "apt.android-7"
+-            downloadBootstrap("aarch64", "ea2aeba8819e517db711f8c32369e89e7c52cee73e07930ff91185e1ab93f4f3", version)
+-            downloadBootstrap("arm", "a38f4d3b2f735f83be2bf54eff463e86dc32a3e2f9f861c1557c4378d249c018", version)
+-            downloadBootstrap("i686", "f5bc0b025b9f3b420b5fcaeefc064f888f5f22a0d6fd7090f4aac0c33eb3555b", version)
+-            downloadBootstrap("x86_64", "b7fd0f2e3a4de534be3144f9f91acc768630fc463eaf134ab2e64c545e834f7a", version)
+-        } else if (packageVariant == "apt-android-5") {
+-            def version = "2022.04.28-r6" + "+" + packageVariant
+-            downloadBootstrap("aarch64", "913609d439415c828c5640be1b0561467e539cb1c7080662decaaca2fb4820e7", version)
+-            downloadBootstrap("arm", "26bfb45304c946170db69108e5eb6e3641aad751406ce106c80df80cad2eccf8", version)
+-            downloadBootstrap("i686", "46dcfeb5eef67ba765498db9fe4c50dc4690805139aa0dd141a9d8ee0693cd27", version)
+-            downloadBootstrap("x86_64", "615b590679ee6cd885b7fd2ff9473c845e920f9b422f790bb158c63fe42b8481", version)
+-        } else {
+-            throw new GradleException("Unsupported TERMUX_PACKAGE_VARIANT \"" + packageVariant + "\"")
+-        }
+-    }
+-}
+-
+-afterEvaluate {
+-    android.applicationVariants.all { variant ->
+-        variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
+-    }
+-}
+diff --git a/app/src/main/cpp/Android.mk b/app/src/main/cpp/Android.mk
+deleted file mode 100644
+index d013e2ed..00000000
+--- a/app/src/main/cpp/Android.mk
++++ /dev/null
+@@ -1,5 +0,0 @@
+-LOCAL_PATH:= $(call my-dir)
+-include $(CLEAR_VARS)
+-LOCAL_MODULE := libtermux-bootstrap
+-LOCAL_SRC_FILES := termux-bootstrap-zip.S termux-bootstrap.c
+-include $(BUILD_SHARED_LIBRARY)
+diff --git a/app/src/main/cpp/termux-bootstrap-zip.S b/app/src/main/cpp/termux-bootstrap-zip.S
+deleted file mode 100644
+index 1cfc9580..00000000
+--- a/app/src/main/cpp/termux-bootstrap-zip.S
++++ /dev/null
+@@ -1,18 +0,0 @@
+-     .global blob
+-     .global blob_size
+-     .section .rodata
+- blob:
+- #if defined __i686__
+-     .incbin "bootstrap-i686.zip"
+- #elif defined __x86_64__
+-     .incbin "bootstrap-x86_64.zip"
+- #elif defined __aarch64__
+-     .incbin "bootstrap-aarch64.zip"
+- #elif defined __arm__
+-     .incbin "bootstrap-arm.zip"
+- #else
+- # error Unsupported arch
+- #endif
+- 1:
+- blob_size:
+-     .int 1b - blob
+diff --git a/app/src/main/cpp/termux-bootstrap.c b/app/src/main/cpp/termux-bootstrap.c
+deleted file mode 100644
+index 8ba745ff..00000000
+--- a/app/src/main/cpp/termux-bootstrap.c
++++ /dev/null
+@@ -1,11 +0,0 @@
+-#include <jni.h>
+-
+-extern jbyte blob[];
+-extern int blob_size;
+-
+-JNIEXPORT jbyteArray JNICALL Java_com_termux_app_TermuxInstaller_getZip(JNIEnv *env, __attribute__((__unused__)) jobject This)
+-{
+-    jbyteArray ret = (*env)->NewByteArray(env, blob_size);
+-    (*env)->SetByteArrayRegion(env, ret, 0, blob_size, blob);
+-    return ret;
+-}
+diff --git a/app/src/main/java/com/termux/app/TermuxInstaller.java b/app/src/main/java/com/termux/app/TermuxInstaller.java
+index b1414999..7019af01 100644
+--- a/app/src/main/java/com/termux/app/TermuxInstaller.java
++++ b/app/src/main/java/com/termux/app/TermuxInstaller.java
+@@ -9,6 +9,7 @@ import android.os.Environment;
+ import android.system.Os;
+ import android.util.Pair;
+ import android.view.WindowManager;
++import android.widget.EditText;
+ 
+ import com.termux.R;
+ import com.termux.shared.file.FileUtils;
+@@ -24,11 +25,12 @@ import com.termux.shared.termux.TermuxUtils;
+ import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment;
+ 
+ import java.io.BufferedReader;
+-import java.io.ByteArrayInputStream;
+ import java.io.File;
+ import java.io.FileOutputStream;
+ import java.io.InputStreamReader;
++import java.net.URL;
+ import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.List;
+ import java.util.zip.ZipEntry;
+ import java.util.zip.ZipInputStream;
+@@ -48,7 +50,8 @@ import static com.termux.shared.termux.TermuxConstants.TERMUX_STAGING_PREFIX_DIR
+  * <p/>
+  * (3) A staging directory, $STAGING_PREFIX, is cleared if left over from broken installation below.
+  * <p/>
+- * (4) The zip file is loaded from a shared library.
++ * (4) The user confirms or edits the bootstrap zip url, which defaults to {@link #DEFAULT_BOOTSTRAP_BASE_URL}
++ * followed by "/bootstrap-$ARCH.zip".
+  * <p/>
+  * (5) The zip, containing entries relative to the $PREFIX, is is downloaded and extracted by a zip input stream
+  * continuously encountering zip file entries:
+@@ -61,6 +64,9 @@ final class TermuxInstaller {
+ 
+     private static final String LOG_TAG = "TermuxInstaller";
+ 
++    /** Where the bootstrap zips of the latest droid-nix release are published. */
++    static final String DEFAULT_BOOTSTRAP_BASE_URL = "https://github.com/lassulus/droid-nix/releases/latest/download";
++
+     /** Performs bootstrap setup if necessary. */
+     static void setupBootstrapIfNeeded(final Activity activity, final Runnable whenDone) {
+         String bootstrapErrorMessage;
+@@ -114,6 +120,20 @@ final class TermuxInstaller {
+             Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" does not exist but another file exists at its destination.");
+         }
+ 
++        final EditText urlEditText = new EditText(activity);
++        urlEditText.setText(DEFAULT_BOOTSTRAP_BASE_URL + "/bootstrap-" + determineTermuxArchName() + ".zip");
++
++        new AlertDialog.Builder(activity)
++            .setTitle("Bootstrap zip")
++            .setMessage("URL of the bootstrap zip to install")
++            .setView(urlEditText)
++            .setCancelable(false)
++            .setPositiveButton(android.R.string.ok,
++                (dialog, which) -> installBootstrap(activity, whenDone, String.valueOf(urlEditText.getText()).trim()))
++            .show();
++    }
++
++    private static void installBootstrap(final Activity activity, final Runnable whenDone, final String bootstrapUrl) {
+         final ProgressDialog progress = ProgressDialog.show(activity, null, activity.getString(R.string.bootstrap_installer_body), true, false);
+         new Thread() {
+             @Override
+@@ -151,13 +171,12 @@ final class TermuxInstaller {
+                         return;
+                     }
+ 
+-                    Logger.logInfo(LOG_TAG, "Extracting bootstrap zip to prefix staging directory \"" + TERMUX_STAGING_PREFIX_DIR_PATH + "\".");
++                    Logger.logInfo(LOG_TAG, "Extracting bootstrap zip from \"" + bootstrapUrl + "\" to prefix staging directory \"" + TERMUX_STAGING_PREFIX_DIR_PATH + "\".");
+ 
+                     final byte[] buffer = new byte[8096];
+                     final List<Pair<String, String>> symlinks = new ArrayList<>(50);
+ 
+-                    final byte[] zipBytes = loadZipBytes();
+-                    try (ZipInputStream zipInput = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
++                    try (ZipInputStream zipInput = new ZipInputStream(new URL(bootstrapUrl).openStream())) {
+                         ZipEntry zipEntry;
+                         while ((zipEntry = zipInput.getNextEntry()) != null) {
+                             if (zipEntry.getName().equals("SYMLINKS.txt")) {
+@@ -375,12 +394,25 @@ final class TermuxInstaller {
+         return FileUtils.createDirectoryFile(directory.getAbsolutePath());
+     }
+ 
+-    public static byte[] loadZipBytes() {
+-        // Only load the shared library when necessary to save memory usage.
+-        System.loadLibrary("termux-bootstrap");
+-        return getZip();
++    /** Get the bootstrap arch name ("aarch64", ...) for the preferred ABI of this device. */
++    private static String determineTermuxArchName() {
++        // Note that we cannot use System.getProperty("os.arch") since that may give e.g. "aarch64"
++        // while a 64-bit runtime may not be installed (like on the Samsung Galaxy S5 Neo).
++        // Instead we search through the supported abi:s on the device, see:
++        // http://developer.android.com/ndk/guides/abis.html
++        // Note that we search for abi:s in preferred order (the ordering of the
++        // Build.SUPPORTED_ABIS list) to avoid e.g. installing arm on an x86 system where arm
++        // emulation is available.
++        for (String androidArch : Build.SUPPORTED_ABIS) {
++            switch (androidArch) {
++                case "arm64-v8a": return "aarch64";
++                case "armeabi-v7a": return "arm";
++                case "x86_64": return "x86_64";
++                case "x86": return "i686";
++            }
++        }
++        throw new RuntimeException("Unable to determine arch from Build.SUPPORTED_ABIS =  " +
++            Arrays.toString(Build.SUPPORTED_ABIS));
+     }
+ 
+-    public static native byte[] getZip();
+-
+ }

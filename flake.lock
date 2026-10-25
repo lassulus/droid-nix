@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "nix-on-droid-app": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1792938371,
-        "narHash": "sha256-wntKM9Z0rMMPLLUN3kFdrcGXxwzgZvNHv85Dv30IGtE=",
-        "ref": "rebase-termux",
-        "rev": "c02306940a10039b30ddafd4d0d42345eaee259d",
-        "revCount": 1541,
-        "type": "git",
-        "url": "file:///var/lib/hermes/workspace/nix-on-droid-app"
-      },
-      "original": {
-        "ref": "rebase-termux",
-        "type": "git",
-        "url": "file:///var/lib/hermes/workspace/nix-on-droid-app"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1792773339,
@@ -35,8 +18,25 @@
     },
     "root": {
       "inputs": {
-        "nix-on-droid-app": "nix-on-droid-app",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "termux-app": "termux-app"
+      }
+    },
+    "termux-app": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790399503,
+        "narHash": "sha256-XhuzluXUBuqyFScTR5SMzBIUFSXbsEzmWJHkEC2M+cw=",
+        "owner": "termux",
+        "repo": "termux-app",
+        "rev": "8629e632fcb95da272221be327db653fb24befe9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "termux",
+        "repo": "termux-app",
+        "rev": "8629e632fcb95da272221be327db653fb24befe9",
+        "type": "github"
       }
     }
   },

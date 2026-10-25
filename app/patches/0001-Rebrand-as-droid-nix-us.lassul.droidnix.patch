@@ -1,0 +1,214 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Sun, 25 Oct 2026 16:09:59 +0100
+Subject: [PATCH 1/5] Rebrand as droid-nix (us.lassul.droidnix)
+
+Install as a separate app next to Termux and Nix-on-Droid: package id
+us.lassul.droidnix (also used as sharedUserId and as prefix for
+authorities, permissions and intent actions), label "droid-nix",
+version 0.5.0 (5). The Java classes keep their com.termux namespace.
+
+TermuxConstants derived several class names (BuildConfig, TermuxActivity,
+TermuxService, RunCommandService, ...) from TERMUX_PACKAGE_NAME, which
+only works while the package id equals the Java namespace. Derive them
+from a new TERMUX_APP_CLASS_PACKAGE_NAME instead.
+
+Issue links point to github.com/lassulus/droid-nix.
+
+Based on nix-on-droid-app commit 54ab7d3f ("Rebrand as Nix /
+Nix-on-Droid") by Alexander Sosedkin.
+---
+ app/build.gradle                              | 14 ++++++-----
+ app/src/main/res/values/strings.xml           |  4 ++--
+ app/src/main/res/xml/shortcuts.xml            |  8 +++----
+ .../termux/shared/termux/TermuxConstants.java | 24 ++++++++++---------
+ termux-shared/src/main/res/values/strings.xml |  6 ++---
+ 5 files changed, 30 insertions(+), 26 deletions(-)
+
+diff --git a/app/build.gradle b/app/build.gradle
+index 33c88d1d..a9fe1cd5 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -41,18 +41,20 @@ android {
+     }
+ 
+     defaultConfig {
++        // Java classes stay in the "com.termux" namespace, only the package id changes.
++        applicationId "us.lassul.droidnix"
+         minSdkVersion project.properties.minSdkVersion.toInteger()
+         targetSdkVersion project.properties.targetSdkVersion.toInteger()
+-        versionCode 118
+-        versionName "0.118.0"
++        versionCode 5
++        versionName "0.5.0"
+ 
+         if (appVersionName) versionName = appVersionName
+         validateVersionName(versionName)
+ 
+         buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\"" // Used by TermuxApplication class
+ 
+-        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
+-        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
++        manifestPlaceholders.TERMUX_PACKAGE_NAME = "us.lassul.droidnix"
++        manifestPlaceholders.TERMUX_APP_NAME = "droid-nix"
+         manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
+         manifestPlaceholders.TERMUX_BOOT_APP_NAME = "Termux:Boot"
+         manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "Termux:Float"
+@@ -132,10 +134,10 @@ android {
+         variant.outputs.all { output ->
+             if (variant.buildType.name == "debug") {
+                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
+-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
++                outputFileName = new File("droid-nix_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
+             } else if (variant.buildType.name == "release") {
+                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
+-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
++                outputFileName = new File("droid-nix_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
+             }
+         }
+     }
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index cbd2992b..00f4d29c 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -1,8 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ 
+ <!DOCTYPE resources [
+-    <!ENTITY TERMUX_PACKAGE_NAME "com.termux">
+-    <!ENTITY TERMUX_APP_NAME "Termux">
++    <!ENTITY TERMUX_PACKAGE_NAME "us.lassul.droidnix">
++    <!ENTITY TERMUX_APP_NAME "droid-nix">
+     <!ENTITY TERMUX_API_APP_NAME "Termux:API">
+     <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
+     <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
+diff --git a/app/src/main/res/xml/shortcuts.xml b/app/src/main/res/xml/shortcuts.xml
+index dcd8d341..aa210de2 100644
+--- a/app/src/main/res/xml/shortcuts.xml
++++ b/app/src/main/res/xml/shortcuts.xml
+@@ -18,7 +18,7 @@
+         tools:targetApi="n_mr1">
+         <intent
+             android:action="android.intent.action.RUN"
+-            android:targetPackage="com.termux"
++            android:targetPackage="us.lassul.droidnix"
+             android:targetClass="com.termux.app.TermuxActivity"
+             android:name="android.shortcut.conversation"/>
+     </shortcut>
+@@ -31,10 +31,10 @@
+         tools:targetApi="n_mr1">
+         <intent
+             android:action="android.intent.action.RUN"
+-            android:targetPackage="com.termux"
++            android:targetPackage="us.lassul.droidnix"
+             android:targetClass="com.termux.app.TermuxActivity"
+             android:name="android.shortcut.conversation">
+-            <extra android:name="com.termux.app.failsafe_session" android:value="true"/>
++            <extra android:name="us.lassul.droidnix.app.failsafe_session" android:value="true"/>
+         </intent>
+     </shortcut>
+ 
+@@ -46,7 +46,7 @@
+         tools:targetApi="n_mr1">
+         <intent
+             android:action="android.intent.action.VIEW"
+-            android:targetPackage="com.termux"
++            android:targetPackage="us.lassul.droidnix"
+             android:targetClass="com.termux.app.activities.SettingsActivity"
+             android:name="android.shortcut.conversation"/>
+     </shortcut>
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java b/termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java
+index 534936ff..5131a3a9 100644
+--- a/termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java
+@@ -347,13 +347,15 @@ public final class TermuxConstants {
+      */
+ 
+     /** Termux app name */
+-    public static final String TERMUX_APP_NAME = "Termux"; // Default: "Termux"
++    public static final String TERMUX_APP_NAME = "droid-nix"; // Default: "Termux"
+     /** Termux package name */
+-    public static final String TERMUX_PACKAGE_NAME = "com.termux"; // Default: "com.termux"
++    public static final String TERMUX_PACKAGE_NAME = "us.lassul.droidnix"; // Default: "com.termux"
++    /** Java package of the Termux app classes, which differs from {@link #TERMUX_PACKAGE_NAME} in droid-nix */
++    public static final String TERMUX_APP_CLASS_PACKAGE_NAME = "com.termux"; // Default: "com.termux"
+     /** Termux GitHub repo name */
+-    public static final String TERMUX_GITHUB_REPO_NAME = "termux-app"; // Default: "termux-app"
++    public static final String TERMUX_GITHUB_REPO_NAME = "droid-nix"; // Default: "termux-app"
+     /** Termux GitHub repo url */
+-    public static final String TERMUX_GITHUB_REPO_URL = TERMUX_GITHUB_ORGANIZATION_URL + "/" + TERMUX_GITHUB_REPO_NAME; // Default: "https://github.com/termux/termux-app"
++    public static final String TERMUX_GITHUB_REPO_URL = "https://github.com/lassulus/" + TERMUX_GITHUB_REPO_NAME; // Default: "https://github.com/termux/termux-app"
+     /** Termux GitHub issues repo url */
+     public static final String TERMUX_GITHUB_ISSUES_REPO_URL = TERMUX_GITHUB_REPO_URL + "/issues"; // Default: "https://github.com/termux/termux-app/issues"
+     /** Termux F-Droid package url */
+@@ -925,17 +927,17 @@ public final class TermuxConstants {
+ 
+ 
+         /** Termux app BuildConfig class name */
+-        public static final String BUILD_CONFIG_CLASS_NAME = TERMUX_PACKAGE_NAME + ".BuildConfig"; // Default: "com.termux.BuildConfig"
++        public static final String BUILD_CONFIG_CLASS_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".BuildConfig"; // Default: "com.termux.BuildConfig"
+ 
+         /** Termux app FileShareReceiverActivity class name */
+-        public static final String FILE_SHARE_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_PACKAGE_NAME + ".app.api.file.FileShareReceiverActivity"; // Default: "com.termux.app.api.file.FileShareReceiverActivity"
++        public static final String FILE_SHARE_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.api.file.FileShareReceiverActivity"; // Default: "com.termux.app.api.file.FileShareReceiverActivity"
+ 
+         /** Termux app FileViewReceiverActivity class name */
+-        public static final String FILE_VIEW_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_PACKAGE_NAME + ".app.api.file.FileViewReceiverActivity"; // Default: "com.termux.app.api.file.FileViewReceiverActivity"
++        public static final String FILE_VIEW_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.api.file.FileViewReceiverActivity"; // Default: "com.termux.app.api.file.FileViewReceiverActivity"
+ 
+ 
+         /** Termux app core activity name. */
+-        public static final String TERMUX_ACTIVITY_NAME = TERMUX_PACKAGE_NAME + ".app.TermuxActivity"; // Default: "com.termux.app.TermuxActivity"
++        public static final String TERMUX_ACTIVITY_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.TermuxActivity"; // Default: "com.termux.app.TermuxActivity"
+ 
+         /**
+          * Termux app core activity.
+@@ -969,14 +971,14 @@ public final class TermuxConstants {
+ 
+ 
+         /** Termux app settings activity name. */
+-        public static final String TERMUX_SETTINGS_ACTIVITY_NAME = TERMUX_PACKAGE_NAME + ".app.activities.SettingsActivity"; // Default: "com.termux.app.activities.SettingsActivity"
++        public static final String TERMUX_SETTINGS_ACTIVITY_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.activities.SettingsActivity"; // Default: "com.termux.app.activities.SettingsActivity"
+ 
+ 
+ 
+ 
+ 
+         /** Termux app core service name. */
+-        public static final String TERMUX_SERVICE_NAME = TERMUX_PACKAGE_NAME + ".app.TermuxService"; // Default: "com.termux.app.TermuxService"
++        public static final String TERMUX_SERVICE_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.TermuxService"; // Default: "com.termux.app.TermuxService"
+ 
+         /**
+          * Termux app core service.
+@@ -1120,7 +1122,7 @@ public final class TermuxConstants {
+ 
+ 
+         /** Termux app run command service name. */
+-        public static final String RUN_COMMAND_SERVICE_NAME = TERMUX_PACKAGE_NAME + ".app.RunCommandService"; // Termux app service to receive commands from 3rd party apps "com.termux.app.RunCommandService"
++        public static final String RUN_COMMAND_SERVICE_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.RunCommandService"; // Termux app service to receive commands from 3rd party apps "com.termux.app.RunCommandService"
+ 
+         /**
+          * Termux app run command service to receive commands sent by 3rd party apps.
+diff --git a/termux-shared/src/main/res/values/strings.xml b/termux-shared/src/main/res/values/strings.xml
+index d585e24f..8ab48bba 100644
+--- a/termux-shared/src/main/res/values/strings.xml
++++ b/termux-shared/src/main/res/values/strings.xml
+@@ -1,15 +1,15 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ 
+ <!DOCTYPE resources [
+-    <!ENTITY TERMUX_PACKAGE_NAME "com.termux">
+-    <!ENTITY TERMUX_APP_NAME "Termux">
++    <!ENTITY TERMUX_PACKAGE_NAME "us.lassul.droidnix">
++    <!ENTITY TERMUX_APP_NAME "droid-nix">
+     <!ENTITY TERMUX_API_APP_NAME "Termux:API">
+     <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
+     <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
+     <!ENTITY TERMUX_STYLING_APP_NAME "Termux:Styling">
+     <!ENTITY TERMUX_TASKER_APP_NAME "Termux:Tasker">
+     <!ENTITY TERMUX_WIDGET_APP_NAME "Termux:Widget">
+-    <!ENTITY TERMUX_PREFIX_DIR_PATH "/data/data/com.termux/files/usr">
++    <!ENTITY TERMUX_PREFIX_DIR_PATH "/data/data/us.lassul.droidnix/files/usr">
+     ]>
+ 
+ <resources>

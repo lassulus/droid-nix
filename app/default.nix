@@ -1,7 +1,7 @@
-# Unsigned release APK of nix-on-droid-app, built from source.
+# Unsigned release APK of droid-nix: upstream termux-app with ./patches applied.
 #
 # Update deps.json (needs network, run from the flake root):
-#   nix build .#nix-on-droid-app.mitmCache.updateScript && ./result
+#   nix run .#update-deps
 {
   lib,
   stdenv,
@@ -9,7 +9,7 @@
   gradle-packages,
   jdk17_headless,
   android,
-  src,
+  termux-app,
 }:
 let
   # termux-app pins gradle 9.2.1 in gradle-wrapper.properties and builds with JDK 17 in CI.
@@ -20,21 +20,25 @@ let
       defaultJava = jdk17_headless;
     }).wrapped;
 
-  buildGradle = builtins.readFile "${src}/app/build.gradle";
+  # Applied in file name order (git format-patch numbering).
+  patches = lib.sort (a: b: a < b) (lib.filesystem.listFilesRecursive ./patches);
+
+  # The versionName set by the patch series, so it stays the single source of truth.
   versionName = lib.head (
     lib.concatMap (
       line:
       let
-        m = builtins.match ''[[:space:]]*versionName "([^"]+)".*'' line;
+        m = builtins.match ''\+[[:space:]]*versionName "([^"]+)".*'' line;
       in
       lib.optional (m != null) (lib.head m)
-    ) (lib.splitString "\n" buildGradle)
+    ) (lib.concatMap (p: lib.splitString "\n" (builtins.readFile p)) patches)
   );
 in
 stdenv.mkDerivation (finalAttrs: {
-  pname = "nix-on-droid-app";
+  pname = "droid-nix-app";
   version = versionName;
-  inherit src;
+  src = termux-app;
+  inherit patches;
 
   nativeBuildInputs = [
     gradle
@@ -48,13 +52,6 @@ stdenv.mkDerivation (finalAttrs: {
     # but the update script's bwrap does not.
     bwrapFlags = ''--ro-bind "$PWD" "$PWD" --ro-bind ${runtimeShell} /bin/sh'';
   };
-
-  # The app's build.gradle also packages x86_64 (for emulators); nix-on-droid
-  # only ships aarch64 bootstraps, so build arm64-v8a only.
-  postPatch = ''
-    substituteInPlace app/build.gradle \
-      --replace-fail "abiFilters 'arm64-v8a', 'x86_64'" "abiFilters 'arm64-v8a'"
-  '';
 
   env = {
     ANDROID_HOME = android.sdk;
@@ -90,17 +87,17 @@ stdenv.mkDerivation (finalAttrs: {
       exit 1
     fi
     mkdir -p $out
-    cp "''${apks[0]}" $out/nix-on-droid-app-unsigned.apk
+    cp "''${apks[0]}" $out/droid-nix-unsigned.apk
     ${android.buildTools}/zipalign -P 16 -f 4 \
-      $out/nix-on-droid-app-unsigned.apk $out/nix-on-droid-app-unsigned-aligned.apk
-    ${android.buildTools}/zipalign -c -P 16 4 $out/nix-on-droid-app-unsigned-aligned.apk
+      $out/droid-nix-unsigned.apk $out/droid-nix-unsigned-aligned.apk
+    ${android.buildTools}/zipalign -c -P 16 4 $out/droid-nix-unsigned-aligned.apk
 
     runHook postInstall
   '';
 
   meta = {
-    description = "Nix-on-Droid Android app (unsigned release APK, arm64-v8a)";
-    homepage = "https://github.com/nix-community/nix-on-droid-app";
+    description = "droid-nix Android app (unsigned release APK, arm64-v8a)";
+    homepage = "https://github.com/lassulus/droid-nix";
     license = lib.licenses.gpl3Only;
     platforms = [ "x86_64-linux" ];
     sourceProvenance = with lib.sourceTypes; [

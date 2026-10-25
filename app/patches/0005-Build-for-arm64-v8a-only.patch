@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Sun, 25 Oct 2026 16:12:04 +0100
+Subject: [PATCH 5/5] Build for arm64-v8a only
+
+Bootstraps are only built for aarch64, so an APK for other ABIs would
+install but never work. Build and package native code for arm64-v8a
+only and drop the ABI split configuration.
+
+Based on nix-on-droid-app commit 66334de6 ("Limit architectures to just
+arm64-v8a (aarch64) to avoid confusion") by Alexander Sosedkin.
+---
+ app/build.gradle               | 13 +++----------
+ terminal-emulator/build.gradle |  2 +-
+ termux-shared/build.gradle     |  4 ++++
+ 3 files changed, 8 insertions(+), 11 deletions(-)
+
+diff --git a/app/build.gradle b/app/build.gradle
+index a8bd904c..30b728b7 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -19,8 +19,6 @@ android {
+     ndkVersion = System.getenv("JITPACK_NDK_VERSION") ?: project.properties.ndkVersion
+     def appVersionName = System.getenv("TERMUX_APP_VERSION_NAME") ?: ""
+     def apkVersionTag = System.getenv("TERMUX_APK_VERSION_TAG") ?: ""
+-    def splitAPKsForDebugBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS") ?: "1"
+-    def splitAPKsForReleaseBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS") ?: "0" // F-Droid does not support split APKs #1904
+ 
+     dependencies {
+         implementation "androidx.annotation:annotation:1.9.0"
+@@ -62,14 +60,9 @@ android {
+         manifestPlaceholders.TERMUX_TASKER_APP_NAME = "Termux:Tasker"
+         manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "Termux:Widget"
+ 
+-        splits {
+-            abi {
+-                enable ((gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
+-                    (gradle.startParameter.taskNames.any { it.contains("Release") } && splitAPKsForReleaseBuilds == "1"))
+-                reset ()
+-                include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
+-                universalApk true
+-            }
++        // Bootstraps are only built for aarch64.
++        ndk {
++            abiFilters 'arm64-v8a'
+         }
+     }
+ 
+diff --git a/terminal-emulator/build.gradle b/terminal-emulator/build.gradle
+index ff1ebae3..31f74fbc 100644
+--- a/terminal-emulator/build.gradle
++++ b/terminal-emulator/build.gradle
+@@ -18,7 +18,7 @@ android {
+         }
+ 
+         ndk {
+-            abiFilters 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
++            abiFilters 'arm64-v8a'
+         }
+     }
+ 
+diff --git a/termux-shared/build.gradle b/termux-shared/build.gradle
+index 5e8d16ae..5d60236a 100644
+--- a/termux-shared/build.gradle
++++ b/termux-shared/build.gradle
+@@ -41,6 +41,10 @@ android {
+                 cppFlags ''
+             }
+         }
++
++        ndk {
++            abiFilters 'arm64-v8a'
++        }
+     }
+ 
+     buildTypes {

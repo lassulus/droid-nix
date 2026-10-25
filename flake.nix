@@ -1,14 +1,12 @@
 {
-  description = "Nix-on-Droid as capable as Termux: app, plugins and packages built from source";
+  description = "droid-nix: a Termux-based terminal app with Nix for Android";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # The nix-on-droid-app fork rebased onto termux-app master.
-    # Switch to the GitHub fork by changing only this line, e.g.
-    #   url = "github:<owner>/nix-on-droid-app/rebase-termux";
-    nix-on-droid-app = {
-      url = "git+file:///var/lib/hermes/workspace/nix-on-droid-app?ref=rebase-termux";
+    # Upstream termux-app; app/patches is applied on top of it.
+    termux-app = {
+      url = "github:termux/termux-app/8629e632fcb95da272221be327db653fb24befe9";
       flake = false;
     };
   };
@@ -29,12 +27,12 @@
     in
     {
       packages.${system} = {
-        nix-on-droid-app = pkgs.callPackage ./pkgs/nix-on-droid-app {
+        droid-nix-app = pkgs.callPackage ./app {
           inherit android;
-          src = inputs.nix-on-droid-app;
+          inherit (inputs) termux-app;
         };
         sign = pkgs.callPackage ./pkgs/sign.nix { inherit android; };
-        default = self.packages.${system}.nix-on-droid-app;
+        default = self.packages.${system}.droid-nix-app;
       };
 
       apps.${system} = {
@@ -43,11 +41,11 @@
           program = "${self.packages.${system}.sign}/bin/sign";
           meta.description = "Sign an APK with a keystore given via SIGN_* env vars";
         };
-        # Regenerates pkgs/nix-on-droid-app/deps.json (needs network); run from the flake root.
+        # Regenerates app/deps.json (needs network); run from the flake root.
         update-deps = {
           type = "app";
-          program = "${self.packages.${system}.nix-on-droid-app.mitmCache.updateScript}";
-          meta.description = "Regenerate the gradle deps.json lockfile of nix-on-droid-app";
+          program = "${self.packages.${system}.droid-nix-app.mitmCache.updateScript}";
+          meta.description = "Regenerate the gradle deps.json lockfile of the app";
         };
       };
     };
