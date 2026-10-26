@@ -2,7 +2,10 @@
 
 > The launcher now replaces proot in droid-nix. The code that ships is
 > `bootstrap/launcher` (`loader.c` here, renamed `launcher.c`); this
-> directory is the record of phases 1–4.
+> directory is the record of phases 1–4. `loader.c` here still reissues
+> rt_sigprocmask inside the handler, so a program's mask changes are lost
+> on sigreturn (jobs of an interactive bash stop); the shipped launcher
+> fixes that.
 
 > Phase 3 (non-PIE targets, full path canonicalisation, all path syscalls, a
 > real `nix-build` under the launcher) is in

@@ -78,9 +78,12 @@ handler. A session runs under it when `/proc/self/status` shows `TracerPid: 0`
 and `Seccomp_filters: 2` (Android's and the launcher's). How it came about,
 its measurements and its limits are in `experiments/sud-loader`.
 
-Known differences from proot: no `--link2symlink` (hard links fail with
-EACCES, as for any app) and no `--sysvipc` emulation. A program that
-installs its own SIGSYS handler conflicts with the launcher's.
+Known differences from proot: no `--link2symlink` and no `--sysvipc`
+emulation. Hard links fail with EACCES, as for any app. Builds that make
+them fail, e.g. pkg-config's install when stdenv's bootstrap is built
+instead of substituted. A program that installs its own SIGSYS handler
+conflicts with the launcher's. `ps` shows `launcher` as the name and the
+launcher's command line for every process.
 
 The app data path (`/data/data/us.lassul.droidnix`) and the package id are
 defined once on the Nix side, in `android-app.nix`.
