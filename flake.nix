@@ -4,9 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Builds the bootstrap zip (static proot, nix 2.20.5). Pinned like upstream
-    # nix-on-droid (head of nixos-24.05 as of 2024-07-06). Bumping it changes
-    # the proot store path, which existing devices cannot build themselves.
+    # Builds the bootstrap zip (static launcher, nix 2.20.5). Pinned like
+    # upstream nix-on-droid (head of nixos-24.05 as of 2024-07-06). Bumping it
+    # changes the launcher store path, which devices cannot build themselves.
     nixpkgs-for-bootstrap.url = "github:NixOS/nixpkgs/49ee0e94463abada1de470c9c07bfc12b36dcf40";
 
     # Upstream termux-app; app/patches is applied on top of it.
@@ -42,6 +42,8 @@
         };
         # Directory with bootstrap-aarch64.zip, assembled on x86_64-linux.
         bootstrap-aarch64 = bootstrap.bootstrapZip;
+        # The aarch64 launcher the bootstrap ships, see README.
+        launcher = bootstrap.launcher;
         sign = pkgs.callPackage ./pkgs/sign.nix { inherit android; };
         default = self.packages.${system}.droid-nix-app;
       };
@@ -80,8 +82,8 @@
           import ./modules {
             inherit pkgs extraSpecialArgs home-manager-path;
             config.imports = modules ++ [
-              # The proot the bootstrap ships; the device only evaluates it.
-              { environment.files.prootStatic = bootstrap.prootTermux; }
+              # The launcher the bootstrap ships; the device only evaluates it.
+              { environment.files.launcher = bootstrap.launcher; }
             ];
           };
 

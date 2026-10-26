@@ -1,5 +1,9 @@
 # In-process /nix interception on Android: phase 2 launcher (issue #1)
 
+> The launcher now replaces proot in droid-nix. The code that ships is
+> `bootstrap/launcher` (`loader.c` here, renamed `launcher.c`); this
+> directory is the record of phases 1–4.
+
 > Phase 3 (non-PIE targets, full path canonicalisation, all path syscalls, a
 > real `nix-build` under the launcher) is in
 > [RESULTS-phase3.md](RESULTS-phase3.md). Phase 4 (proot's binds, DNS, GNU

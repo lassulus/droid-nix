@@ -8,5 +8,5 @@ in
 runCommand "bootstrap-zip" { } ''
   mkdir $out
   cd ${bootstrap}
-  ${zip}/bin/zip -q -9 -r $out/bootstrap-${arch} ./* ./.l2s
+  ${zip}/bin/zip -q -9 -r $out/bootstrap-${arch} ./*
 ''

@@ -43,7 +43,7 @@ jobs:
           if-no-files-found: error
 
   build-bootstrap:
-    # proot is cross-compiled from x86_64-linux, see bootstrap/proot.nix.
+    # The launcher is cross-compiled from x86_64-linux, see bootstrap/launcher.
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space for the cross toolchain

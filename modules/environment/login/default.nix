@@ -35,13 +35,13 @@ in
         description = "Login-inner script.";
       };
 
-      prootStatic = mkOption {
+      launcher = mkOption {
         type = types.package;
-        # Set to bootstrap/proot.nix by the bootstrap and by
+        # Set to bootstrap/launcher by the bootstrap and by
         # lib.droidNixConfiguration, so that on-device generations refer to
-        # the proot store path the bootstrap ships.
+        # the launcher store path the bootstrap ships.
         internal = true;
-        description = "<literal>proot-static</literal> package.";
+        description = "<literal>launcher</literal> package.";
       };
     };
 
@@ -72,13 +72,16 @@ in
         fi
       '';
 
-      installProotStatic = ''
-        if (test -e /bin/.proot-static.new && ! diff /bin/.proot-static.new ${cfg.prootStatic}/bin/proot-static > /dev/null) || \
-            (! test -e /bin/.proot-static.new && ! diff /bin/proot-static ${cfg.prootStatic}/bin/proot-static > /dev/null); then
+      # Every execve in a session re-execs /bin/launcher, and the session's
+      # seccomp filter only exempts the syscall stub of the launcher it
+      # started with. So login replaces it only when no launcher runs.
+      installLauncher = ''
+        if (test -e /bin/.launcher.new && ! diff /bin/.launcher.new ${cfg.launcher}/bin/launcher > /dev/null) || \
+            (! test -e /bin/.launcher.new && ! diff /bin/launcher ${cfg.launcher}/bin/launcher > /dev/null); then
           $DRY_RUN_CMD mkdir $VERBOSE_ARG --parents /bin
-          $DRY_RUN_CMD cp $VERBOSE_ARG ${cfg.prootStatic}/bin/proot-static /bin/.proot-static.tmp
-          $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /bin/.proot-static.tmp
-          $DRY_RUN_CMD mv $VERBOSE_ARG /bin/.proot-static.tmp /bin/.proot-static.new
+          $DRY_RUN_CMD cp $VERBOSE_ARG ${cfg.launcher}/bin/launcher /bin/.launcher.tmp
+          $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /bin/.launcher.tmp
+          $DRY_RUN_CMD mv $VERBOSE_ARG /bin/.launcher.tmp /bin/.launcher.new
         fi
       '';
     };

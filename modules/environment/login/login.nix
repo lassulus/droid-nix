@@ -1,15 +1,37 @@
 # Copyright (c) 2019-2022, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ config, writeScript, writeText }:
+{ config, lib, writeScript, writeText }:
 
 let
-  inherit (config.build) installationDir extraProotOptions;
+  inherit (config.build) installationDir;
   fakeProcStat = writeText "fakeProcStat" ''
     btime 0
   '';
   fakeProcUptime = writeText "fakeProcUptime" ''
     0.00 0.00
   '';
+
+  # The launcher's view of the filesystem, passed as "-b host:guest". A "!"
+  # binds the guest path itself instead of what it points to (/bin and /etc
+  # are symlinks on Android). Binds with whenUnreadable are only made if the
+  # app cannot read the guest path and the fake exists.
+  binds = [
+    { host = "${installationDir}/nix"; guest = "/nix"; }
+    { host = "${installationDir}/bin"; guest = "/bin!"; }
+    { host = "${installationDir}/etc"; guest = "/etc!"; }
+    { host = "${installationDir}/tmp"; guest = "/tmp"; }
+    { host = "${installationDir}/usr"; guest = "/usr"; }
+    { host = "${installationDir}/dev/shm"; guest = "/dev/shm"; }
+    { host = "${installationDir}${fakeProcStat}"; guest = "/proc/stat"; whenUnreadable = true; }
+    { host = "${installationDir}${fakeProcUptime}"; guest = "/proc/uptime"; whenUnreadable = true; }
+    { host = "/"; guest = "/android"; }
+  ];
+
+  addBind = { host, guest, whenUnreadable ? false }:
+    let add = ''BINDS="$BINDS -b ${host}:${guest}"''; in
+    if whenUnreadable
+    then "if [ ! -r ${guest} ] && [ -e ${host} ]; then ${add}; fi"
+    else add;
 in
 
 writeScript "login" ''
@@ -19,13 +41,11 @@ writeScript "login" ''
 
   export USER="${config.user.userName}"
   export HOME="${config.user.home}"
-  export PROOT_TMP_DIR=${installationDir}/tmp
-  export PROOT_L2S_DIR=${installationDir}/.l2s
 
-  if ! /system/bin/pgrep proot-static > /dev/null; then
-    if test -e ${installationDir}/bin/.proot-static.new; then
-      echo "Installing new proot-static..."
-      /system/bin/mv ${installationDir}/bin/.proot-static.new ${installationDir}/bin/proot-static
+  if ! /system/bin/pgrep -x launcher > /dev/null; then
+    if test -e ${installationDir}/bin/.launcher.new; then
+      echo "Installing new launcher..."
+      /system/bin/mv ${installationDir}/bin/.launcher.new ${installationDir}/bin/launcher
     fi
 
     if test -e ${installationDir}/usr/lib/.login-inner.new; then
@@ -34,30 +54,10 @@ writeScript "login" ''
     fi
   fi
 
-  if [ ! -r /proc/stat ] && [ -e ${installationDir}${fakeProcStat} ]; then
-    BIND_PROC_STAT="-b ${installationDir}${fakeProcStat}:/proc/stat"
-  else
-    BIND_PROC_STAT=""
-  fi
+  BINDS=""
+  ${lib.concatMapStringsSep "\n" addBind binds}
 
-  if [ ! -r /proc/uptime ] && [ -e ${installationDir}${fakeProcUptime} ]; then
-    BIND_PROC_UPTIME="-b ${installationDir}${fakeProcUptime}:/proc/uptime"
-  else
-    BIND_PROC_UPTIME=""
-  fi
-
-  exec ${installationDir}/bin/proot-static \
-    -b ${installationDir}/nix:/nix \
-    -b ${installationDir}/bin:/bin! \
-    -b ${installationDir}/etc:/etc! \
-    -b ${installationDir}/tmp:/tmp \
-    -b ${installationDir}/usr:/usr \
-    -b ${installationDir}/dev/shm:/dev/shm \
-    $BIND_PROC_STAT \
-    $BIND_PROC_UPTIME \
-    -b /:/android \
-    --link2symlink \
-    --sysvipc \
-    ${builtins.concatStringsSep " " extraProotOptions} \
-    ${installationDir}/bin/sh ${installationDir}/usr/lib/login-inner "$@"
+  # launcher [-b host:guest]... TARGET argv0 argv1 ...
+  exec ${installationDir}/bin/launcher $BINDS \
+    ${installationDir}/bin/sh ${installationDir}/bin/sh ${installationDir}/usr/lib/login-inner "$@"
 ''

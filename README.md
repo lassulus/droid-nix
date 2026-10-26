@@ -37,8 +37,8 @@ switch-generation.
 `/data/data/us.lassul.droidnix/files/usr`. It contains:
 
 - a Nix store with Nix 2.20.5, bash and cacert,
-- a static `proot` (termux/proot) that provides `/nix` and the other
-  bind mounts,
+- the static `launcher` that provides `/nix` and the other bind mounts
+  (see below),
 - the `login` scripts that run the first-time setup described above.
 
 Zip entries carry no file modes, so `EXECUTABLES.txt` and `SYMLINKS.txt` list
@@ -51,12 +51,36 @@ nix build .#bootstrap-aarch64   # result/bootstrap-aarch64.zip
 The bootstrap is built with the `nixpkgs-for-bootstrap` input, pinned to the
 same nixpkgs commit as upstream Nix-on-Droid (49ee0e94, nixos-24.05 as of
 2024-07-06). Nix, bash and cacert are the aarch64-linux packages from
-cache.nixos.org. proot is termux's fork, cross-compiled from x86_64-linux with
-gcc as a static musl binary (`pkgsCross.aarch64-multiplatform-musl.pkgsStatic`,
-see `bootstrap/proot.nix`). On-device generations refer to proot by the store
-path of that same expression: the device only evaluates it and finds it in the
-store the bootstrap shipped. Bumping `nixpkgs-for-bootstrap` changes that path,
-and existing devices cannot build the new one themselves.
+cache.nixos.org. The launcher is cross-compiled from x86_64-linux with gcc as
+a static musl binary (`pkgsCross.aarch64-multiplatform-musl.pkgsStatic`, see
+`bootstrap/launcher`). On-device generations refer to it by the store path of
+that same expression: the device only evaluates it and finds it in the store
+the bootstrap shipped. Changing the launcher or bumping
+`nixpkgs-for-bootstrap` changes that path, and devices cannot build the new
+one themselves. Copy it onto an existing install before `droid-nix switch`,
+e.g. through a file binary cache:
+
+```sh
+nix copy --to file://$PWD/cache $(nix build --print-out-paths .#launcher)
+# copy cache/ to the phone's Download folder, then in droid-nix:
+nix copy --no-check-sigs --from file:///android/sdcard/Download/cache /nix/store/<hash>-launcher-aarch64-unknown-linux-musl
+```
+
+## The launcher
+
+`bootstrap/launcher/launcher.c` runs every process of a droid-nix session in
+the view of the bind table in `modules/environment/login/login.nix` (`/nix`,
+`/etc`, `/tmp`, ... and `/android` for the real root). It does what proot
+did, in-process instead of with ptrace: a seccomp `SECCOMP_RET_TRAP` filter
+on the path syscalls, a SIGSYS handler that translates the paths, and a
+userspace ELF loader that starts each new program, so every execve keeps the
+handler. A session runs under it when `/proc/self/status` shows `TracerPid: 0`
+and `Seccomp_filters: 2` (Android's and the launcher's). How it came about,
+its measurements and its limits are in `experiments/sud-loader`.
+
+Known differences from proot: no `--link2symlink` (hard links fail with
+EACCES, as for any app) and no `--sysvipc` emulation. A program that
+installs its own SIGSYS handler conflicts with the launcher's.
 
 The app data path (`/data/data/us.lassul.droidnix`) and the package id are
 defined once on the Nix side, in `android-app.nix`.
