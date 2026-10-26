@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # proot baseline for build-native.sh, run in the normal droid-nix (under-proot)
 # shell:
-#   bash /android/sdcard/Download/sl3/build-proot.sh
+#   bash /android/sdcard/Download/sl4/build-proot.sh
 # Same expression and nix, timed the same way.
-exec > /android/sdcard/Download/sl3/out-build-proot.txt 2>&1
+exec > /android/sdcard/Download/sl4/out-build-proot.txt 2>&1
 NIX=/nix/store/1r5r28fm7fdsy7ncr4wswb7998d0vswh-nix-2.34.9/bin
 DATE=/nix/store/m2ar7c5ylhgg8vp7dfdx9bhjfvki5xdg-coreutils-9.12/bin/date
 d=/nix/sud-loader

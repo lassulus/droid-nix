@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # proot baseline for the same macro benchmarks, run in the normal droid-nix
 # (under-proot) shell after run-native.sh (which writes t.c):
-#   bash /android/sdcard/Download/sl3/run-proot.sh
+#   bash /android/sdcard/Download/sl4/run-proot.sh
 # Same store paths and files as run-native.sh, timed the same way.
-exec > /android/sdcard/Download/sl3/out-proot.txt 2>&1
+exec > /android/sdcard/Download/sl4/out-proot.txt 2>&1
 
 GLIBC=/nix/store/nhphqkv18x8fpf3flz0bsm1h554pawn7-glibc-2.44-57
 NS=/nix/store/1r5r28fm7fdsy7ncr4wswb7998d0vswh-nix-2.34.9/bin/nix-store
@@ -22,6 +22,9 @@ while read -r k v; do case $k in TracerPid:|Seccomp:|Seccomp_filters:) echo "$k 
 run() { label=$1; shift; r=""; for i in 1 2 3; do
   s=$($DATE +%s%N); "$@" >/dev/null 2>&1; e=$($DATE +%s%N)
   r="$r $(( (e - s) / 1000000 ))"; done; echo "$label:$r"; }
+
+echo "-- bind semantics: binds-proot.txt, to diff against binds-native.txt"
+$BASH /android/sdcard/Download/sl4/binds-check.sh /android/sdcard/Download/sl4/binds-proot.txt; echo "  exit=$?"
 
 run verify $NS   --verify-path $GLIBC
 run find   $FIND $GLIBC
