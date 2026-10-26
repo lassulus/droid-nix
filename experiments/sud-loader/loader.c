@@ -5,9 +5,10 @@
 // takes a path (+ execve/execveat, getcwd, rt_sigaction/rt_sigprocmask),
 // exempting its own fixed-address syscall stub, and a SIGSYS handler that
 // canonicalises each path the way the kernel's path walk would, but in the
-// guest view where /nix is "<prefix>/nix": every component is checked, and
-// symlinks are read and followed by the handler, so an absolute "/nix/..."
-// target is re-translated. The syscall is then reissued through the stub. It
+// guest view given by proot-style binds ("-b host:guest", e.g.
+// "<prefix>/nix:/nix"): every component is checked, and symlinks are read
+// and followed by the handler, so an absolute "/nix/..." target is
+// re-translated. The syscall is then reissued through the stub. It
 // also acts as a userspace ELF loader: it maps the target binary (PIE or not)
 // and its PT_INTERP (a /nix/store ld.so) itself and jumps to the interpreter.
 //
@@ -91,10 +92,7 @@ extern void jump_to(void *entry, void *sp) __attribute__((noreturn));
 #define SYS6(nr, a, b, c, d, e, f) \
 	raw_syscall6((nr), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e), (long)(f))
 
-// The default on-device prefix; overridable with SUD_PREFIX for adb testing.
-static const char *g_prefix = "/data/data/us.lassul.droidnix/files/usr";
-static size_t g_prefixlen;
-static const char *g_target;    // canonical guest path of the image (/proc/self/exe)
+static const char *g_target;   // canonical guest path of the image (/proc/self/exe)
 static const char *g_execfn;    // the path as given (AT_EXECFN)
 static const char *g_launcher;  // this loader's real path (for re-exec)
 static volatile int g_debug;    // SUD_DEBUG: log each trapped syscall
@@ -173,12 +171,101 @@ static void die_errno(const char *msg, const char *arg, long err)
 	__builtin_unreachable();
 }
 
-// ---- path translation --------------------------------------------------
+// ---- binds: proot's -b host:guest as one prefix table ------------------
 
-static int is_nix(const char *p)
+// One bind, canonical (no trailing "/"). host and guest are not
+// NUL-terminated (they point into arg); arg is "host:guest", which every
+// re-exec gets on its command line.
+struct bind {
+	const char *host, *guest, *arg;
+	size_t hlen, glen;
+};
+static struct bind *g_binds;
+static int g_nbinds;
+
+// Is p (length pl) the directory d (length dl) or inside it?
+static int under(const char *p, size_t pl, const char *d, size_t dl)
 {
-	return p && p[0] == '/' && p[1] == 'n' && p[2] == 'i' && p[3] == 'x' &&
-	       (p[4] == '/' || p[4] == 0);
+	return pl >= dl && memcmp(p, d, dl) == 0 && (pl == dl || p[dl] == '/');
+}
+
+// Guest path g (length gl; 0 is the root) to its host path in out: through the
+// bind with the longest guest path containing g, as proot's
+// substitute_binding(GUEST); outside every bind, the host path is g itself
+// (proot's rootfs is "/"). Returns the length or -ENAMETOOLONG.
+static long to_host(const char *g, size_t gl, char *out)
+{
+	const struct bind *b = 0;
+	for (int i = 0; i < g_nbinds; i++)
+		if (under(g, gl, g_binds[i].guest, g_binds[i].glen) &&
+		    (!b || g_binds[i].glen > b->glen))
+			b = &g_binds[i];
+	const char *h = "", *rest = g;
+	size_t hl = 0, rl = gl;
+	if (b) {
+		h = b->host;
+		hl = b->hlen;
+		rest = g + b->glen;
+		rl = gl - b->glen;
+		if (hl == 1 && rl)
+			hl = 0;  // host "/": "/x", not "//x"
+	}
+	if (hl + rl == 0) {
+		out[0] = '/';
+		out[1] = 0;
+		return 1;
+	}
+	if (hl + rl >= PATHBUF)
+		return -ENAMETOOLONG;
+	memcpy(out, h, hl);
+	memcpy(out + hl, rest, rl);
+	out[hl + rl] = 0;
+	return (long)(hl + rl);
+}
+
+// The bind with the longest host path containing the host path p, as proot's
+// get_binding(HOST). Host "/" never counts: proot's rootfs binding "/:/" comes
+// first among equal host paths, so it wins over "-b /:/android".
+static const struct bind *host_bind(const char *p, size_t pl)
+{
+	const struct bind *b = 0;
+	for (int i = 0; i < g_nbinds; i++)
+		if (g_binds[i].hlen > 1 && under(p, pl, g_binds[i].host, g_binds[i].hlen) &&
+		    (!b || g_binds[i].hlen > b->hlen))
+			b = &g_binds[i];
+	return b;
+}
+
+// Host path to guest path, in place in buf (capacity PATHBUF, len without the
+// NUL): a path inside a bind's host path gets the bind's guest path in front,
+// as proot's substitute_binding(HOST); any other path is unchanged. Returns
+// the new length or -ENAMETOOLONG.
+static long to_guest(char *buf, long len)
+{
+	const struct bind *b = host_bind(buf, (size_t)len);
+	if (!b)
+		return len;
+	long rl = len - (long)b->hlen;
+	if ((long)b->glen + rl >= (long)PATHBUF)
+		return -ENAMETOOLONG;
+	memmove(buf + b->glen, buf + b->hlen, (size_t)rl);
+	memcpy(buf, b->guest, b->glen);
+	buf[b->glen + rl] = 0;
+	return (long)b->glen + rl;
+}
+
+// Is the path component c (length cl) the last component of a bind's guest
+// path? A walk can only enter a bind through such a name.
+static int bind_name(const char *c, size_t cl)
+{
+	for (int i = 0; i < g_nbinds; i++) {
+		const char *e = g_binds[i].guest + g_binds[i].glen, *s = e;
+		while (s[-1] != '/')
+			s--;
+		if ((size_t)(e - s) == cl && memcmp(s, c, cl) == 0)
+			return 1;
+	}
+	return 0;
 }
 
 static int is_proc(const char *p)
@@ -187,41 +274,16 @@ static int is_proc(const char *p)
 	       (p[5] == '/' || p[5] == 0);
 }
 
-// Lexical "/nix/..." -> "<prefix>/nix/..." with no symlink resolution, for
-// openat2 with RESOLVE_* flags (see there). Returns buf or path unchanged.
-static const char *xlate(const char *path, char *buf)
-{
-	if (!is_nix(path))
-		return path;
-	size_t n = zlen(path);
-	if (g_prefixlen + n + 1 > PATHBUF)
-		return path;  // too long: the kernel will fail it with ENAMETOOLONG
-	memcpy(buf, g_prefix, g_prefixlen);
-	memcpy(buf + g_prefixlen, path, n + 1);
-	return buf;
-}
+// ---- path canonicalisation ---------------------------------------------
 
-// Reverse: if a result of length len starts with "<prefix>/nix", strip the
-// prefix in place. len counts bytes (with or without a trailing NUL); the NUL,
-// if present and included in len, moves with the rest.
-static long unxlate(char *buf, long len)
-{
-	if (len > (long)g_prefixlen && memcmp(buf, g_prefix, g_prefixlen) == 0 &&
-	    is_nix(buf + g_prefixlen)) {
-		long rest = len - (long)g_prefixlen;
-		memmove(buf, buf + g_prefixlen, rest);
-		return rest;
-	}
-	return len;
-}
-
-// The guest path of dirfd (or of the cwd for AT_FDCWD), written to g (capacity
-// cap). Returns its length with the root as "" (length 0), or a negative errno.
-static long guest_base(long dirfd, char *g, size_t cap)
+// The guest path of dirfd (or of the cwd for AT_FDCWD), written to g
+// (PATHBUF). Returns its length with the root as "" (length 0), or a negative
+// errno.
+static long guest_base(long dirfd, char *g)
 {
 	long n;
 	if (dirfd == AT_FDCWD) {
-		n = SYS2(SYS_getcwd, g, cap);
+		n = SYS2(SYS_getcwd, g, PATHBUF);
 		if (n < 0)
 			return n;
 		n--;  // getcwd counts the NUL
@@ -229,28 +291,30 @@ static long guest_base(long dirfd, char *g, size_t cap)
 		char fdp[40];
 		memcpy(fdp, "/proc/self/fd/", 14);
 		utoa((unsigned long)dirfd, fdp + 14);
-		n = SYS4(SYS_readlinkat, AT_FDCWD, fdp, g, cap - 1);
+		n = SYS4(SYS_readlinkat, AT_FDCWD, fdp, g, PATHBUF - 1);
 		if (n < 0)
 			return -EBADF;
-		if (n >= (long)cap - 1)
+		if (n >= (long)PATHBUF - 1)
 			return -ENAMETOOLONG;
 		g[n] = 0;
 	}
 	if (g[0] != '/')
 		return -ENOTDIR;  // a pipe, socket, anon inode, "(unreachable)" cwd
-	n = unxlate(g, n + 1) - 1;
+	n = to_guest(g, n);
 	if (n == 1)
 		n = 0;
-	g[n] = 0;
+	if (n >= 0)
+		g[n] = 0;
 	return n;
 }
 
 // A relative path can go to the kernel unchanged, resolved against the real
 // dirfd/cwd, when the guest walk could not differ: no ".." (which could climb
-// out of <prefix>/nix, where the guest has "/") and no symlink among the
-// components the kernel follows (its target could be "/nix/..."). Returns 0
-// for "unchanged", 1 for "needs the full walk", or the negative errno the
-// kernel would report for an intermediate component. tmp is scratch.
+// out of a bind), no component named like a bind's guest path (the only way
+// to step into a bind), and no symlink among the components the kernel
+// follows (its target could be "/nix/..."). Returns 0 for "unchanged", 1 for
+// "needs the full walk", or the negative errno the kernel would report for an
+// intermediate component. tmp is scratch.
 static long rel_plain(long dirfd, const char *path, int follow, char *tmp)
 {
 	size_t pl = zlen(path);
@@ -274,6 +338,8 @@ static long rel_plain(long dirfd, const char *path, int follow, char *tmp)
 			return 1;
 		if (p - c == 1 && c[0] == '.')
 			continue;
+		if (bind_name(c, (size_t)(p - c)))
+			return 1;
 		if (last && !follow && q == p)
 			return 0;
 		char save = *p, one;
@@ -287,30 +353,22 @@ static long rel_plain(long dirfd, const char *path, int follow, char *tmp)
 	}
 }
 
-// Canonicalise (dirfd, path) as the kernel's path walk would, in the guest
-// view where /nix is <prefix>/nix (proot's approach): starting from "/" or the
-// guest path of dirfd/cwd, every component is appended and, unless it is the
-// final one and !follow, checked with readlink; a symlink is followed by
-// splicing its target in front of the rest (an absolute target restarts at
-// "/", so "/nix/..." targets are re-translated), ".." pops a component of the
-// already-resolved path, and a trailing slash or final "." keeps its meaning.
-// procfs magic links (/proc/<pid>/fd/N, cwd, ...) name kernel objects rather
-// than paths, so at the first symlink under /proc the rest is left to the
-// kernel. A missing intermediate component fails with the kernel's errno; a
-// missing final one is passed on (O_CREAT, mkdir, ...).
+// Canonicalise (dirfd, path) in the guest view as the kernel's path walk
+// would (proot's approach): starting from "/" or the guest path of
+// dirfd/cwd, every component is appended and, unless it is the final one and
+// !follow, its host path (to_host) is checked with readlink; a symlink is
+// followed by splicing its target in front of the rest (an absolute target
+// restarts at "/", so "/nix/..." targets are re-translated), ".." pops a
+// component of the already-resolved path, and a trailing slash or final "."
+// keeps its meaning. procfs magic links (/proc/<pid>/fd/N, cwd, ...) name
+// kernel objects rather than paths, so at the first symlink under /proc the
+// rest is left to the kernel. A missing intermediate component fails with the
+// kernel's errno; a missing final one is passed on (O_CREAT, mkdir, ...).
 //
-// Sets *res to the path the kernel should get: out (an absolute host path), or
-// the original path when nothing needs translating. Returns 0 or -errno.
-static long canon(long dirfd, const char *path, int follow, char *out, const char **res)
+// Writes the guest path to g (PATHBUF) and returns its length, or -errno.
+// hb (PATHBUF) is scratch for host paths.
+static long walk(long dirfd, const char *path, int follow, char *g, char *hb)
 {
-	*res = path;
-	if (!path || !*path)
-		return 0;  // NULL / "": AT_EMPTY_PATH or the kernel's own error
-	if (path[0] != '/') {
-		long r = rel_plain(dirfd, path, follow, out);
-		if (r <= 0)
-			return r;
-	}
 	size_t pl = zlen(path);
 	if (pl >= PATHBUF)
 		return -ENAMETOOLONG;
@@ -319,14 +377,10 @@ static long canon(long dirfd, const char *path, int follow, char *out, const cha
 	char rb[PATHBUF];
 	char *rem = rb + PATHBUF - 1 - pl;
 	memcpy(rem, path, pl + 1);
-	// The guest path is built at out + prefixlen behind a copy of the
-	// prefix, so a /nix guest path is also its host path in place.
-	memcpy(out, g_prefix, g_prefixlen);
-	char *g = out + g_prefixlen;
-	size_t cap = PATHBUF - g_prefixlen, gl = 0;
+	size_t gl = 0;
 	g[0] = 0;
 	if (path[0] != '/') {
-		long n = guest_base(dirfd, g, cap);
+		long n = guest_base(dirfd, g);
 		if (n < 0)
 			return n;
 		gl = (size_t)n;
@@ -358,7 +412,7 @@ static long canon(long dirfd, const char *path, int follow, char *out, const cha
 			dot = last;
 			continue;
 		}
-		if (gl + 1 + cl >= cap)
+		if (gl + 1 + cl >= PATHBUF)
 			return -ENAMETOOLONG;
 		size_t prev = gl;
 		g[gl++] = '/';
@@ -367,8 +421,11 @@ static long canon(long dirfd, const char *path, int follow, char *out, const cha
 		g[gl] = 0;
 		if (last && !follow && !trail)
 			break;
+		long hl = to_host(g, gl, hb);
+		if (hl < 0)
+			return hl;
 		size_t room = (size_t)(rem - rb);
-		long n = SYS4(SYS_readlinkat, AT_FDCWD, is_nix(g) ? out : g, rb, room);
+		long n = SYS4(SYS_readlinkat, AT_FDCWD, hb, rb, room);
 		if (n == -EINVAL)
 			continue;  // not a symlink
 		if (n < 0) {
@@ -378,7 +435,7 @@ static long canon(long dirfd, const char *path, int follow, char *out, const cha
 		}
 		if (is_proc(g)) {
 			size_t rl = zlen(rem);
-			if (gl + rl >= cap)
+			if (gl + rl >= PATHBUF)
 				return -ENAMETOOLONG;
 			memcpy(g + gl, rem, rl + 1);
 			gl += rl;
@@ -399,7 +456,7 @@ static long canon(long dirfd, const char *path, int follow, char *out, const cha
 	if (dot || trail) {
 		const char *sfx = dot ? "/." : "/";
 		size_t sl = zlen(sfx);
-		if (gl + sl >= cap)
+		if (gl + sl >= PATHBUF)
 			return -ENAMETOOLONG;
 		memcpy(g + gl, sfx, sl + 1);
 		gl += sl;
@@ -407,8 +464,32 @@ static long canon(long dirfd, const char *path, int follow, char *out, const cha
 	if (!gl) {
 		g[0] = '/';
 		g[1] = 0;
+		gl = 1;
 	}
-	*res = is_nix(g) ? out : g;
+	return (long)gl;
+}
+
+// The host path the kernel should get for (dirfd, path): *res is out (an
+// absolute host path, PATHBUF) or the original path when it can go to the
+// kernel unchanged (rel_plain). Returns 0 or -errno.
+static long canon(long dirfd, const char *path, int follow, char *out, const char **res)
+{
+	*res = path;
+	if (!path || !*path)
+		return 0;  // NULL / "": AT_EMPTY_PATH or the kernel's own error
+	if (path[0] != '/') {
+		long r = rel_plain(dirfd, path, follow, out);
+		if (r <= 0)
+			return r;
+	}
+	char g[PATHBUF];
+	long n = walk(dirfd, path, follow, g, out);
+	if (n < 0)
+		return n;
+	n = to_host(g, (size_t)n, out);
+	if (n < 0)
+		return n;
+	*res = out;
 	return 0;
 }
 
@@ -420,7 +501,7 @@ static long guest_abs(long dirfd, const char *path, char *buf, const char **res)
 	*res = path;
 	if (path[0] == '/')
 		return 0;
-	long n = guest_base(dirfd, buf, PATHBUF);
+	long n = guest_base(dirfd, buf);
 	if (n < 0)
 		return n;
 	size_t pl = zlen(path);
@@ -523,10 +604,11 @@ static long exec_check(const char *path)
 	}
 }
 
-// Re-exec the loader itself: argv = [loader, --reexec, TARGET, orig argv...],
-// envp kept. "--reexec" tells the new image the filter is already installed;
-// it is passed in argv because programs (nix for its builders) clear the
-// environment. On success this never returns; else it returns -errno.
+// Re-exec the loader itself: argv = [loader, --reexec, -b host:guest ...,
+// TARGET, orig argv...], envp kept. "--reexec" tells the new image the filter
+// is already installed and the binds are canonical; both are passed in argv
+// because programs (nix for its builders) clear the environment. On success
+// this never returns; else it returns -errno.
 static long reexec(const char *target, char **argv, char **envp)
 {
 	long e = exec_check(target);
@@ -535,14 +617,19 @@ static long reexec(const char *target, char **argv, char **envp)
 	int n = 0;
 	while (argv && argv[n])
 		n++;
-	// VLA on the signal stack: loader + flag + target + n args + NULL.
-	char *na[n + 4];
-	na[0] = (char *)g_launcher;
-	na[1] = "--reexec";
-	na[2] = (char *)target;
+	// VLA on the signal stack: loader + flag + binds + target + n args + NULL.
+	char *na[n + 4 + 2 * g_nbinds];
+	int k = 0;
+	na[k++] = (char *)g_launcher;
+	na[k++] = "--reexec";
+	for (int i = 0; i < g_nbinds; i++) {
+		na[k++] = "-b";
+		na[k++] = (char *)g_binds[i].arg;
+	}
+	na[k++] = (char *)target;
 	for (int i = 0; i < n; i++)
-		na[3 + i] = argv[i];
-	na[3 + n] = 0;
+		na[k++] = argv[i];
+	na[k] = 0;
 	return SYS3(SYS_execve, g_launcher, na, envp);
 }
 
@@ -670,11 +757,19 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 	case SYS_openat2: {
 		// struct open_how { u64 flags, mode, resolve; }. With RESOLVE_*
 		// flags the kernel must do the walk itself to enforce them, so
-		// the path is only translated lexically: a "/nix"-absolute
-		// symlink inside it is then not re-translated.
+		// an absolute path is only translated lexically (to_host): a
+		// "/nix"-absolute symlink inside it is then not re-translated.
 		const uint64_t *how = (const uint64_t *)r[2];
 		if (how && r[3] >= 24 && how[2]) {
-			r[1] = (unsigned long)xlate((const char *)r[1], b1);
+			const char *p = (const char *)r[1];
+			if (p && p[0] == '/') {
+				long e = to_host(p, zlen(p), b1);
+				if (e < 0) {
+					r[0] = (unsigned long)e;
+					return;
+				}
+				r[1] = (unsigned long)b1;
+			}
 			break;
 		}
 		int f = how ? (int)how[0] : 0;
@@ -802,8 +897,11 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		break;
 
 	// readlinkat(dirfd, path, buf, bufsiz): /proc/self/exe reports the
-	// target; otherwise translate the path and reverse-translate the result
-	// (a /proc magic link reports a host path).
+	// target; otherwise translate the path. As in proot (detranslate_path
+	// with a referrer), only the content of links under /proc is
+	// reverse-translated: those name kernel objects by their host path.
+	// Every other link's content is returned as stored. The full content is
+	// read first, so the result is truncated to bufsiz after translation.
 	case SYS_readlinkat: {
 		const char *path = (const char *)r[1];
 		char *ubuf = (char *)r[2];
@@ -817,20 +915,38 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 			return;
 		}
 		FIX(0, 1, 0, b1);
-		long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		if (ret > 0)
-			ret = unxlate(ubuf, ret);
+		if (sz <= 0)
+			break;  // the kernel's EINVAL
+		long ret = SYS4(nr, r[0], r[1], b2, PATHBUF - 1);
+		if (ret > 0 && host_bind(b2, (size_t)ret)) {
+			const char *h = (const char *)r[1];
+			int in_proc = h[0] == '/' ? is_proc(h) : guest_base((long)(int)r[0], b1) >= 0 && is_proc(b1);
+			if (in_proc) {
+				b2[ret] = 0;
+				ret = to_guest(b2, ret);
+			}
+		}
+		if (ret > 0) {
+			if (ret > sz)
+				ret = sz;
+			memcpy(ubuf, b2, (size_t)ret);
+		}
 		r[0] = (unsigned long)ret;
 		return;
 	}
 
-	// getcwd(buf, size): reverse-translate the cwd. The kernel returns the
-	// length including the trailing NUL.
+	// getcwd(buf, size): reverse-translate the cwd, as proot's (emulated)
+	// getcwd always does. The kernel returns the length with the NUL.
 	case SYS_getcwd: {
 		char *ubuf = (char *)r[0];
-		long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		if (ret > 0)
-			ret = unxlate(ubuf, ret);
+		long ret = SYS2(nr, b2, PATHBUF);
+		if (ret > 0) {
+			ret = to_guest(b2, ret - 1);
+			if (ret >= 0 && ret + 1 > (long)r[1])
+				ret = -ERANGE;
+			if (ret >= 0)
+				memcpy(ubuf, b2, (size_t)++ret);
+		}
 		r[0] = (unsigned long)ret;
 		return;
 	}
@@ -1310,6 +1426,81 @@ static void *build_stack(int targc, char **targv, char **envp, unsigned long *ou
 	return sp;
 }
 
+// ---- bind table setup --------------------------------------------------
+
+// Drop the trailing "/" or "/." a walk keeps (proot's chop_finality).
+static long chop(char *p, long n)
+{
+	if (n > 1 && p[n - 1] == '/')
+		n--;
+	else if (n >= 2 && p[n - 1] == '.' && p[n - 2] == '/')
+		n = n == 2 ? 1 : n - 2;
+	p[n] = 0;
+	return n;
+}
+
+// Canonicalise the binds once, in the first process, as proot does at
+// startup (new_binding, initialize_binding): the host path with every
+// symlink resolved, and it must exist; the guest path in the guest view of
+// the binds it is nested in (containers first), its final component followed
+// unless the guest path ends in "!". The canonical "host:guest" strings go to
+// store (2 * PATHBUF per bind) and are what re-execs get. Not supported, with
+// an error: a relative guest path, binding the guest root "/" (proot's -r),
+// and two binds with the same guest path or the same host path other than
+// "/" (proot picks one by its list order).
+static void init_binds(int nb, char *store)
+{
+	for (int i = 1; i < nb; i++)
+		for (int j = i; j > 0 && g_binds[j - 1].glen > g_binds[j].glen; j--) {
+			struct bind t = g_binds[j];
+			g_binds[j] = g_binds[j - 1];
+			g_binds[j - 1] = t;
+		}
+	for (int i = 0; i < nb; i++) {
+		struct bind *b = &g_binds[i];
+		char raw[PATHBUF], g[PATHBUF], hb[PATHBUF];
+		char *out = store + (size_t)i * 2 * PATHBUF;
+		if (b->hlen >= PATHBUF || b->glen >= PATHBUF || !b->hlen || !b->glen)
+			die2("bad bind: ", b->arg);
+		memcpy(raw, b->host, b->hlen);
+		raw[b->hlen] = 0;
+		g_nbinds = 0;  // the host path in the plain host view
+		long hl = walk(AT_FDCWD, raw, 1, out, hb);
+		struct stat st;
+		if (hl >= 0)
+			hl = chop(out, hl);
+		long e = hl < 0 ? hl : SYS4(SYS_newfstatat, AT_FDCWD, out, &st, 0);
+		if (e < 0)
+			die_errno("bind host path ", raw, e);
+		size_t rl = b->glen;
+		memcpy(raw, b->guest, rl + 1);
+		int follow = raw[rl - 1] != '!';
+		if (!follow)
+			raw[--rl] = 0;
+		if (raw[0] != '/')
+			die2("bind guest path must be absolute: ", b->arg);
+		g_nbinds = i;  // the guest path through the binds before it
+		long gl = walk(AT_FDCWD, raw, follow, g, hb);
+		if (gl < 0)
+			die_errno("bind guest path ", raw, gl);
+		gl = chop(g, gl);
+		if (gl == 1)
+			die2("binding the guest root / is not supported: ", b->arg);
+		if (hl + 1 + gl >= (long)(2 * PATHBUF))
+			die2("bad bind: ", b->arg);
+		out[hl] = ':';
+		memcpy(out + hl + 1, g, (size_t)gl + 1);
+		*b = (struct bind){ out, out + hl + 1, out, (size_t)hl, (size_t)gl };
+	}
+	for (int i = 0; i < nb; i++)
+		for (int j = i + 1; j < nb; j++) {
+			const struct bind *x = &g_binds[i], *y = &g_binds[j];
+			if ((x->glen == y->glen && memcmp(x->guest, y->guest, x->glen) == 0) ||
+			    (x->hlen > 1 && x->hlen == y->hlen && memcmp(x->host, y->host, x->hlen) == 0))
+				die2("two binds share a path: ", y->arg);
+		}
+}
+
 // ---- entry -------------------------------------------------------------
 
 int main(int argc, char **argv, char **envp)
@@ -1323,21 +1514,34 @@ int main(int argc, char **argv, char **envp)
 		our_auxv = (unsigned long *)(e + 1);
 	}
 
-	const char *pfx = getenv("SUD_PREFIX");
-	if (pfx && *pfx)
-		g_prefix = pfx;
-	g_prefixlen = zlen(g_prefix);
-	if (g_prefixlen >= PATHBUF / 2)
-		die("SUD_PREFIX is too long");
-
-	// A re-exec from our own execve handler: the filter is already there.
+	// A re-exec from our own execve handler: the filter is already there
+	// and the binds are canonical.
 	int first = !(argc > 1 && strcmp(argv[1], "--reexec") == 0);
 	if (!first) {
 		argv++;
 		argc--;
 	}
+	int nb = 0;
+	while (1 + 2 * nb + 1 < argc && strcmp(argv[1 + 2 * nb], "-b") == 0)
+		nb++;
+	if (nb) {
+		size_t sz = (size_t)nb * sizeof(struct bind) + (first ? (size_t)nb * PATHBUF * 2 : 0);
+		g_binds = (struct bind *)xmmap(0, sz, PROT_READ | PROT_WRITE,
+					       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		for (int i = 0; i < nb; i++) {
+			const char *a = argv[2 + 2 * i], *c = strchr(a, ':');
+			if (!c)
+				die2("-b needs host:guest: ", a);
+			g_binds[i] = (struct bind){ a, c + 1, a, (size_t)(c - a), zlen(c + 1) };
+		}
+		if (first)
+			init_binds(nb, (char *)(g_binds + nb));
+		g_nbinds = nb;
+	}
+	argv += 2 * nb;
+	argc -= 2 * nb;
 	if (argc < 2)
-		die("usage: loader <target> [argv0 argv1 ...]   (target may be a /nix/store path)");
+		die("usage: loader [-b host:guest]... <target> [argv0 argv1 ...]");
 
 	const char *target = argv[1];
 	g_execfn = target;
@@ -1396,16 +1600,10 @@ int main(int argc, char **argv, char **envp)
 
 	// /proc/self/exe reports the canonical guest path of the image.
 	static char tg[PATHBUF];
-	char ab[PATHBUF];
-	const char *h;
-	e = guest_abs(AT_FDCWD, target, ab, &h);
-	if (e == 0)
-		e = canon(AT_FDCWD, h, 1, tg, &h);
+	char hb[PATHBUF];
+	e = walk(AT_FDCWD, target, 1, tg, hb);
 	if (e < 0)
 		die_errno("cannot resolve ", target, e);
-	if (h != tg)
-		memmove(tg, h, zlen(h) + 1);
-	unxlate(tg, (long)zlen(tg) + 1);
 	g_target = tg;
 
 	struct loaded exe, interp;

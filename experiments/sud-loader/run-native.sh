@@ -1,14 +1,17 @@
 # Correctness + macro benchmarks for the launcher, run in the app's FAILSAFE
 # (native, no-proot) session:
-#   sh /sdcard/Download/sl3/run-native.sh
+#   sh /sdcard/Download/sl4/run-native.sh
 # /system/bin/sh (toybox) in the app domain; all real work goes through the
 # loader. Store paths are this device's; adjust the hashes for another store.
-# Loader contract: loader TARGET [argv0 argv1 ...]   (argv0 = program's argv[0])
+# Loader contract: loader [-b host:guest]... TARGET [argv0 argv1 ...]
+# (argv0 = program's argv[0]); the binds are login.nix's, from binds.sh.
 usr=/data/data/us.lassul.droidnix/files/usr
 d=$usr/nix/sud-loader
-L=$d/loader
-mkdir -p $d && cp /sdcard/Download/sl3/loader $L && chmod 755 $L
-exec > /sdcard/Download/sl3/out-native.txt 2>&1
+mkdir -p $d && cp /sdcard/Download/sl4/loader $d/loader && chmod 755 $d/loader
+cp /sdcard/Download/sl4/binds-check.sh $d/binds-check.sh
+. /sdcard/Download/sl4/binds.sh
+L="$d/loader $B"
+exec > /sdcard/Download/sl4/out-native.txt 2>&1
 
 HELLO=/nix/store/dnz35byzl8yw7s81gzqhdq33dds220mx-hello-2.12.3/bin/hello
 CO=/nix/store/m2ar7c5ylhgg8vp7dfdx9bhjfvki5xdg-coreutils-9.12/bin
@@ -79,6 +82,12 @@ echo x > $d/t/hf; ln $d/t/hf $d/t/hf2 2>&1 | toybox sed 's/.*: //'; echo "  toyb
 $L $CO/ln ln $G/hf $G/hf2; echo "  exit=$?"
 $L $CO/ln ln $G/missing $G/hf2; echo "  exit=$? (ENOENT expected)"
 rm -f $d/t/hf $d/t/hf2
+
+echo; echo "=== binds (phase 4): see binds-native.txt, diffed against binds-proot.txt"
+$L $BASH bash /nix/sud-loader/binds-check.sh /sdcard/Download/sl4/binds-native.txt; echo "  exit=$?"
+echo "-- DNS: see dns-native.sh"
+echo "-- relative path into a bind from cwd / (phase 3 gave ENOENT)"
+$L $BASH bash -c "cd /; $CO/ls -d nix/store tmp"; echo "  exit=$?"
 
 echo; echo "=== benchmarks (ms, 3 runs) over glibc-2.44-57 ==="
 run() { label=$1; shift; r=""; for i in 1 2 3; do

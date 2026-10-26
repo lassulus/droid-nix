@@ -156,9 +156,10 @@ which is why substitution is off in both runs. The launcher translates only
 
 ## Limitations (current)
 
-* **Only `/nix` is translated.** proot also binds `/etc`, `/tmp`, `/bin`,
-  `/usr` and `/dev/shm`. Natively, programs see Android's own paths there
-  (no `/etc/resolv.conf`, `/etc/passwd`, `/bin/sh` is toybox).
+Phase 4 fixed "only `/nix` is translated": the launcher has proot's binds
+and the native nix-build needs no `NIX_CONF_DIR`/`TMPDIR` (see
+[RESULTS-phase4.md](RESULTS-phase4.md)). The rest still holds:
+
 * **clone3 always fails with ENOSYS.** libcs fall back to clone(). A program
   that uses clone3 without a fallback would fail.
 * **A program that installs its own SIGSYS handler, or blocks SIGSYS by means
