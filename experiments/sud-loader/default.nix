@@ -1,5 +1,5 @@
-# Static, non-PIE aarch64 musl loader for the in-process /nix interception
-# experiment (issue #1, phase 2), cross-built with the same
+# Static, non-PIE aarch64 musl loader (linked high, see Makefile) for the
+# in-process /nix interception experiment (issue #1), cross-built with the same
 # nixpkgs-for-bootstrap musl toolchain proot is built with.
 { nixpkgs }:
 

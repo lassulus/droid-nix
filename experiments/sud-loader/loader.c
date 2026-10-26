@@ -1,23 +1,28 @@
-// sud-loader (issue #1, phase 2): a minimal in-process launcher that runs
-// real /nix/store binaries in the droid-nix app domain without proot.
+// sud-loader (issue #1): a minimal in-process launcher that runs real
+// /nix/store binaries in the droid-nix app domain without proot.
 //
-// It installs one seccomp SECCOMP_RET_TRAP filter for the path-taking
-// syscalls (+ execve/execveat, chdir, getcwd, readlinkat), exempting its own
-// fixed-address syscall stub, and a SIGSYS handler that rewrites "/nix/..."
-// to "<prefix>/nix/..." and reissues the syscall through the stub. It then
-// acts as a userspace ELF loader: it maps the target binary and its
-// PT_INTERP (a /nix/store ld.so) itself and jumps to the interpreter.
+// It installs one seccomp SECCOMP_RET_TRAP filter for every syscall that
+// takes a path (+ execve/execveat, getcwd, rt_sigaction/rt_sigprocmask),
+// exempting its own fixed-address syscall stub, and a SIGSYS handler that
+// canonicalises each path the way the kernel's path walk would, but in the
+// guest view where /nix is "<prefix>/nix": every component is checked, and
+// symlinks are read and followed by the handler, so an absolute "/nix/..."
+// target is re-translated. The syscall is then reissued through the stub. It
+// also acts as a userspace ELF loader: it maps the target binary (PIE or not)
+// and its PT_INTERP (a /nix/store ld.so) itself and jumps to the interpreter.
 //
 // A trapped execve/execveat re-execs the loader with the target as argument,
 // so every new image gets the handler again (the filter and NO_NEW_PRIVS
 // survive execve; the handler does not).
 //
-// Keep it minimal: no heuristics, no program-specific behaviour, no limits.
-// Unsupported cases print a clear error instead of being papered over.
+// Keep it minimal: no heuristics, no program-specific behaviour, no limits
+// beyond the kernel's own. Unsupported cases print a clear error instead of
+// being papered over.
 
 #define _GNU_SOURCE
 #include <elf.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/audit.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
@@ -27,8 +32,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <termios.h>
 #include <sys/types.h>
 #include <ucontext.h>
 #include <unistd.h>
@@ -39,11 +49,34 @@
 #ifndef AT_EMPTY_PATH
 #define AT_EMPTY_PATH 0x1000
 #endif
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
+// Path syscalls newer than this toolchain's musl headers (asm-generic numbers).
+#ifndef SYS_fchmodat2
+#define SYS_fchmodat2 452
+#endif
+#ifndef SYS_clone3
+#define SYS_clone3 435
+#endif
+#define SYS_setxattrat 463
+#define SYS_getxattrat 464
+#define SYS_listxattrat 465
+#define SYS_removexattrat 466
+#define SYS_open_tree_attr 467
+#define SYS_file_getattr 468
+#define SYS_file_setattr 469
 
 #define PATHBUF 4096
 #define PAGE 4096UL
 #define PAGE_DOWN(x) ((x) & ~(PAGE - 1))
 #define PAGE_UP(x) PAGE_DOWN((x) + PAGE - 1)
+
+// The kernel's own limits, mirrored so errors match what it would report.
+#define MAXSYMLINKS 40      // symlinks followed in one lookup (ELOOP)
+#define BINPRM_BUF_SIZE 256 // bytes of a "#!" line the kernel reads
+#define MAX_INTERP_DEPTH 5  // nested "#!" interpreters (exec_binprm, ELOOP)
 
 extern char allow_start[], allow_end[];
 extern long raw_syscall6(long nr, long a0, long a1, long a2, long a3, long a4, long a5);
@@ -61,7 +94,8 @@ extern void jump_to(void *entry, void *sp) __attribute__((noreturn));
 // The default on-device prefix; overridable with SUD_PREFIX for adb testing.
 static const char *g_prefix = "/data/data/us.lassul.droidnix/files/usr";
 static size_t g_prefixlen;
-static const char *g_target;    // untranslated target path (for /proc/self/exe)
+static const char *g_target;    // canonical guest path of the image (/proc/self/exe)
+static const char *g_execfn;    // the path as given (AT_EXECFN)
 static const char *g_launcher;  // this loader's real path (for re-exec)
 static volatile int g_debug;    // SUD_DEBUG: log each trapped syscall
 
@@ -99,20 +133,6 @@ static void die2(const char *msg, const char *arg)
 	__builtin_unreachable();
 }
 
-static int utoa(unsigned long v, char *buf);
-
-static void outn(int fd, long v)
-{
-	char b[24];
-	if (v < 0) {
-		out(fd, "-");
-		v = -v;
-	}
-	utoa((unsigned long)v, b);
-	out(fd, b);
-}
-
-
 // base-10 unsigned into buf, returns length.
 static int utoa(unsigned long v, char *buf)
 {
@@ -130,6 +150,29 @@ static int utoa(unsigned long v, char *buf)
 	return n;
 }
 
+static void outn(int fd, long v)
+{
+	char b[24];
+	if (v < 0) {
+		out(fd, "-");
+		v = -v;
+	}
+	utoa((unsigned long)v, b);
+	out(fd, b);
+}
+
+static void die_errno(const char *msg, const char *arg, long err)
+{
+	out(2, "sud-loader: ");
+	out(2, msg);
+	out(2, arg);
+	out(2, ": errno ");
+	outn(2, -err);
+	out(2, "\n");
+	SYS1(SYS_exit_group, 127);
+	__builtin_unreachable();
+}
+
 // ---- path translation --------------------------------------------------
 
 static int is_nix(const char *p)
@@ -138,15 +181,21 @@ static int is_nix(const char *p)
 	       (p[4] == '/' || p[4] == 0);
 }
 
-// "/nix/..." -> "<prefix>/nix/...". Writes into buf (>= PATHBUF). Returns the
-// pointer the syscall should use (buf, or the original path untouched).
+static int is_proc(const char *p)
+{
+	return p[0] == '/' && p[1] == 'p' && p[2] == 'r' && p[3] == 'o' && p[4] == 'c' &&
+	       (p[5] == '/' || p[5] == 0);
+}
+
+// Lexical "/nix/..." -> "<prefix>/nix/..." with no symlink resolution, for
+// openat2 with RESOLVE_* flags (see there). Returns buf or path unchanged.
 static const char *xlate(const char *path, char *buf)
 {
 	if (!is_nix(path))
 		return path;
 	size_t n = zlen(path);
 	if (g_prefixlen + n + 1 > PATHBUF)
-		return path;  // too long: leave it, the syscall will just fail cleanly
+		return path;  // too long: the kernel will fail it with ENAMETOOLONG
 	memcpy(buf, g_prefix, g_prefixlen);
 	memcpy(buf + g_prefixlen, path, n + 1);
 	return buf;
@@ -166,78 +215,359 @@ static long unxlate(char *buf, long len)
 	return len;
 }
 
-// Resolve an absolute path to a real, prefix-based path, following any
-// symlink chain at the final component. Store symlinks commonly point at
-// absolute "/nix/store/..." targets, which the kernel would otherwise follow
-// literally (and fail, since /nix does not exist). We read each link ourselves
-// and re-translate "/nix" targets. Relative and dirfd-relative paths are left
-// to the kernel (resolved against an already-real dirfd/cwd). This does not
-// resolve "/nix" symlinks that appear on interior path components; full
-// per-component canonicalisation (as proot does) is left as future work.
-static const char *translate(const char *path, char *buf)
+// The guest path of dirfd (or of the cwd for AT_FDCWD), written to g (capacity
+// cap). Returns its length with the root as "" (length 0), or a negative errno.
+static long guest_base(long dirfd, char *g, size_t cap)
 {
-	if (!path || path[0] != '/')
-		return path;  // relative: the kernel resolves it against the dirfd/cwd
-	const char *cur = xlate(path, buf);
-	if (cur != buf) {  // not a /nix path: copy into buf so we can rewrite it
-		size_t n = zlen(cur);
-		if (n >= PATHBUF)
-			return cur;
-		memcpy(buf, cur, n + 1);
-	}
-	char tmp[PATHBUF];
-	for (int i = 0; i < 40; i++) {
-		long n = raw_syscall6(SYS_readlinkat, (long)-100, (long)buf, (long)tmp,
-				      PATHBUF - 1, 0, 0);
+	long n;
+	if (dirfd == AT_FDCWD) {
+		n = SYS2(SYS_getcwd, g, cap);
 		if (n < 0)
-			break;  // not a symlink (or missing): use buf as-is
-		tmp[n] = 0;
-		if (tmp[0] == '/') {  // absolute target
-			const char *t = xlate(tmp, buf);
-			if (t != buf) {  // absolute non-/nix target
-				size_t m = zlen(t);
-				if (m >= PATHBUF)
-					break;
-				memcpy(buf, t, m + 1);
+			return n;
+		n--;  // getcwd counts the NUL
+	} else {
+		char fdp[40];
+		memcpy(fdp, "/proc/self/fd/", 14);
+		utoa((unsigned long)dirfd, fdp + 14);
+		n = SYS4(SYS_readlinkat, AT_FDCWD, fdp, g, cap - 1);
+		if (n < 0)
+			return -EBADF;
+		if (n >= (long)cap - 1)
+			return -ENAMETOOLONG;
+		g[n] = 0;
+	}
+	if (g[0] != '/')
+		return -ENOTDIR;  // a pipe, socket, anon inode, "(unreachable)" cwd
+	n = unxlate(g, n + 1) - 1;
+	if (n == 1)
+		n = 0;
+	g[n] = 0;
+	return n;
+}
+
+// A relative path can go to the kernel unchanged, resolved against the real
+// dirfd/cwd, when the guest walk could not differ: no ".." (which could climb
+// out of <prefix>/nix, where the guest has "/") and no symlink among the
+// components the kernel follows (its target could be "/nix/..."). Returns 0
+// for "unchanged", 1 for "needs the full walk", or the negative errno the
+// kernel would report for an intermediate component. tmp is scratch.
+static long rel_plain(long dirfd, const char *path, int follow, char *tmp)
+{
+	size_t pl = zlen(path);
+	if (pl >= PATHBUF)
+		return 0;  // the kernel reports ENAMETOOLONG
+	memcpy(tmp, path, pl + 1);
+	char *p = tmp;
+	for (;;) {
+		while (*p == '/')
+			p++;
+		if (!*p)
+			return 0;
+		char *c = p;
+		while (*p && *p != '/')
+			p++;
+		char *q = p;
+		while (*q == '/')
+			q++;
+		int last = !*q;
+		if (p - c == 2 && c[0] == '.' && c[1] == '.')
+			return 1;
+		if (p - c == 1 && c[0] == '.')
+			continue;
+		if (last && !follow && q == p)
+			return 0;
+		char save = *p, one;
+		*p = 0;
+		long n = SYS4(SYS_readlinkat, dirfd, tmp, &one, 1);
+		*p = save;
+		if (n >= 0)
+			return 1;
+		if (n != -EINVAL)
+			return last ? 0 : n;
+	}
+}
+
+// Canonicalise (dirfd, path) as the kernel's path walk would, in the guest
+// view where /nix is <prefix>/nix (proot's approach): starting from "/" or the
+// guest path of dirfd/cwd, every component is appended and, unless it is the
+// final one and !follow, checked with readlink; a symlink is followed by
+// splicing its target in front of the rest (an absolute target restarts at
+// "/", so "/nix/..." targets are re-translated), ".." pops a component of the
+// already-resolved path, and a trailing slash or final "." keeps its meaning.
+// procfs magic links (/proc/<pid>/fd/N, cwd, ...) name kernel objects rather
+// than paths, so at the first symlink under /proc the rest is left to the
+// kernel. A missing intermediate component fails with the kernel's errno; a
+// missing final one is passed on (O_CREAT, mkdir, ...).
+//
+// Sets *res to the path the kernel should get: out (an absolute host path), or
+// the original path when nothing needs translating. Returns 0 or -errno.
+static long canon(long dirfd, const char *path, int follow, char *out, const char **res)
+{
+	*res = path;
+	if (!path || !*path)
+		return 0;  // NULL / "": AT_EMPTY_PATH or the kernel's own error
+	if (path[0] != '/') {
+		long r = rel_plain(dirfd, path, follow, out);
+		if (r <= 0)
+			return r;
+	}
+	size_t pl = zlen(path);
+	if (pl >= PATHBUF)
+		return -ENAMETOOLONG;
+	// The unconsumed rest of the path, right-aligned in rb; the consumed
+	// space in front of it receives symlink targets.
+	char rb[PATHBUF];
+	char *rem = rb + PATHBUF - 1 - pl;
+	memcpy(rem, path, pl + 1);
+	// The guest path is built at out + prefixlen behind a copy of the
+	// prefix, so a /nix guest path is also its host path in place.
+	memcpy(out, g_prefix, g_prefixlen);
+	char *g = out + g_prefixlen;
+	size_t cap = PATHBUF - g_prefixlen, gl = 0;
+	g[0] = 0;
+	if (path[0] != '/') {
+		long n = guest_base(dirfd, g, cap);
+		if (n < 0)
+			return n;
+		gl = (size_t)n;
+	}
+	int links = 0, trail = 0, dot = 0;
+	for (;;) {
+		while (*rem == '/')
+			rem++;
+		if (!*rem)
+			break;
+		char *c = rem;
+		while (*rem && *rem != '/')
+			rem++;
+		size_t cl = (size_t)(rem - c);
+		char *q = rem;
+		while (*q == '/')
+			q++;
+		int last = !*q;
+		trail = last && q != rem;
+		dot = 0;
+		if (c[0] == '.' && (cl == 1 || (cl == 2 && c[1] == '.'))) {
+			if (cl == 2) {
+				while (gl && g[gl - 1] != '/')
+					gl--;
+				if (gl)
+					gl--;
+				g[gl] = 0;
 			}
-		} else {  // relative target: replace the final component of buf
-			char *slash = strrchr(buf, '/');
-			if (!slash)
+			dot = last;
+			continue;
+		}
+		if (gl + 1 + cl >= cap)
+			return -ENAMETOOLONG;
+		size_t prev = gl;
+		g[gl++] = '/';
+		memcpy(g + gl, c, cl);
+		gl += cl;
+		g[gl] = 0;
+		if (last && !follow && !trail)
+			break;
+		size_t room = (size_t)(rem - rb);
+		long n = SYS4(SYS_readlinkat, AT_FDCWD, is_nix(g) ? out : g, rb, room);
+		if (n == -EINVAL)
+			continue;  // not a symlink
+		if (n < 0) {
+			if (last)
 				break;
-			size_t tl = zlen(tmp);
-			if ((size_t)(slash + 1 - buf) + tl >= PATHBUF)
-				break;
-			memcpy(slash + 1, tmp, tl + 1);  // ".." left for the kernel to resolve
+			return n;
+		}
+		if (is_proc(g)) {
+			size_t rl = zlen(rem);
+			if (gl + rl >= cap)
+				return -ENAMETOOLONG;
+			memcpy(g + gl, rem, rl + 1);
+			gl += rl;
+			trail = dot = 0;
+			break;
+		}
+		if (n >= (long)room)
+			return -ENAMETOOLONG;
+		if (n == 0)
+			return -ENOENT;
+		if (++links > MAXSYMLINKS)
+			return -ELOOP;
+		gl = rb[0] == '/' ? 0 : prev;
+		g[gl] = 0;
+		rem -= n;
+		memmove(rem, rb, (size_t)n);
+	}
+	if (dot || trail) {
+		const char *sfx = dot ? "/." : "/";
+		size_t sl = zlen(sfx);
+		if (gl + sl >= cap)
+			return -ENAMETOOLONG;
+		memcpy(g + gl, sfx, sl + 1);
+		gl += sl;
+	}
+	if (!gl) {
+		g[0] = '/';
+		g[1] = 0;
+	}
+	*res = is_nix(g) ? out : g;
+	return 0;
+}
+
+// (dirfd, path) as an absolute guest path: path itself if absolute, else the
+// guest path of dirfd/cwd joined with it ("" names the dirfd itself). *res is
+// path or buf (PATHBUF). Returns 0 or -errno.
+static long guest_abs(long dirfd, const char *path, char *buf, const char **res)
+{
+	*res = path;
+	if (path[0] == '/')
+		return 0;
+	long n = guest_base(dirfd, buf, PATHBUF);
+	if (n < 0)
+		return n;
+	size_t pl = zlen(path);
+	if ((size_t)n + 1 + pl >= PATHBUF)
+		return -ENAMETOOLONG;
+	if (pl) {
+		buf[n] = '/';
+		memcpy(buf + n + 1, path, pl + 1);
+	} else if (!n) {
+		buf[0] = '/';
+		buf[1] = 0;
+	}
+	*res = buf;
+	return 0;
+}
+
+// ---- execve: checks, "#!" and the re-exec ------------------------------
+
+// Split a "#!" line in place, as binfmt_script does: interpreter, then one
+// optional argument (the rest of the line, trailing blanks removed). Returns
+// the interpreter, or NULL if the line has none.
+static char *parse_shebang(char *line, long n, char **arg)
+{
+	line[n] = 0;
+	for (char *q = line; *q; q++)
+		if (*q == '\n') {
+			*q = 0;
+			break;
+		}
+	char *p = line + 2;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	char *interp = p;
+	while (*p && *p != ' ' && *p != '\t')
+		p++;
+	*arg = 0;
+	if (*p) {
+		*p++ = 0;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p) {
+			*arg = p;
+			char *q = p + zlen(p);
+			while (q > p && (q[-1] == ' ' || q[-1] == '\t' || q[-1] == '\r'))
+				*--q = 0;
 		}
 	}
-	return buf;
+	return *interp ? interp : 0;
 }
 
-static int is_proc_self_exe(const char *p)
+// Open path (guest view) read-only and read its first bytes into line.
+// Returns the byte count or -errno; *isreg reports a regular file.
+static long read_head(const char *path, char *line, int check_exec)
 {
-	return p && strcmp(p, "/proc/self/exe") == 0;
+	char buf[PATHBUF];
+	const char *h;
+	long e = canon(AT_FDCWD, path, 1, buf, &h);
+	if (e < 0)
+		return e;
+	if (check_exec) {
+		e = SYS4(SYS_faccessat, AT_FDCWD, h, X_OK, 0);
+		if (e < 0)
+			return e;
+		struct stat st;
+		e = SYS4(SYS_newfstatat, AT_FDCWD, h, &st, 0);
+		if (e < 0)
+			return e;
+		if (!S_ISREG(st.st_mode))
+			return -EACCES;
+	}
+	long fd = SYS4(SYS_openat, AT_FDCWD, h, O_RDONLY | O_CLOEXEC, 0);
+	if (fd < 0)
+		return fd;
+	long n = SYS3(SYS_read, fd, line, BINPRM_BUF_SIZE - 1);
+	SYS1(SYS_close, fd);
+	return n;
 }
 
-// ---- the execve re-exec path -------------------------------------------
+// What the kernel's execve would fail with for path (0 if it would run).
+// Checked before re-exec'ing ourselves, after which an error could no longer
+// be returned to the caller (execvp's PATH search relies on ENOENT/EACCES).
+static long exec_check(const char *path)
+{
+	char line[BINPRM_BUF_SIZE], next[BINPRM_BUF_SIZE];
+	for (int depth = 0;; depth++) {
+		if (depth > MAX_INTERP_DEPTH)
+			return -ELOOP;
+		long n = read_head(path, line, 1);
+		if (n < 0)
+			return n;
+		if (n >= 4 && memcmp(line, ELFMAG, SELFMAG) == 0)
+			return 0;
+		if (n < 2 || line[0] != '#' || line[1] != '!')
+			return -ENOEXEC;
+		char *arg, *interp = parse_shebang(line, n, &arg);
+		if (!interp)
+			return -ENOEXEC;
+		memcpy(next, interp, zlen(interp) + 1);
+		path = next;
+	}
+}
 
-// Re-exec the loader itself: argv = [loader, TARGET, orig argv...], envp kept.
-// On success this never returns; on failure it returns the (negative) errno.
+// Re-exec the loader itself: argv = [loader, --reexec, TARGET, orig argv...],
+// envp kept. "--reexec" tells the new image the filter is already installed;
+// it is passed in argv because programs (nix for its builders) clear the
+// environment. On success this never returns; else it returns -errno.
 static long reexec(const char *target, char **argv, char **envp)
 {
+	long e = exec_check(target);
+	if (e < 0)
+		return e;
 	int n = 0;
-	while (argv[n])
+	while (argv && argv[n])
 		n++;
-	// VLA on the signal stack: loader + target + n original args + NULL.
-	char *na[n + 3];
+	// VLA on the signal stack: loader + flag + target + n args + NULL.
+	char *na[n + 4];
 	na[0] = (char *)g_launcher;
-	na[1] = (char *)target;
+	na[1] = "--reexec";
+	na[2] = (char *)target;
 	for (int i = 0; i < n; i++)
-		na[2 + i] = argv[i];
-	na[2 + n] = 0;
+		na[3 + i] = argv[i];
+	na[3 + n] = 0;
 	return SYS3(SYS_execve, g_launcher, na, envp);
 }
 
 // ---- the SIGSYS handler ------------------------------------------------
+
+// The termios2 ioctls (asm-generic numbers, sizeof(struct termios2) == 44)
+// plus TCSETSF, which Android's app SELinux policy denies on ttys; trapped
+// by cmd so every other ioctl stays untrapped. See the SYS_ioctl case.
+#define TCGETS2 0x802c542aU
+#define TCSETS2 0x402c542bU
+#define TCSETSW2 0x402c542cU
+#define TCSETSF2 0x402c542dU
+static const uint32_t traced_ioctls[] = { TCGETS2, TCSETS2, TCSETSW2, TCSETSF2, TCSETSF };
+#define NIOCTLS (int)(sizeof traced_ioctls / sizeof traced_ioctls[0])
+
+// Baud rate of a CBAUD code (Bnnn), as the kernel's tty_termios_baud_rate.
+static uint32_t baud(uint32_t code)
+{
+	static const uint32_t lo[16] = { 0, 50, 75, 110, 134, 150, 200, 300, 600, 1200,
+					 1800, 2400, 4800, 9600, 19200, 38400 };
+	static const uint32_t hi[16] = { 0, 57600, 115200, 230400, 460800, 500000,
+					 576000, 921600, 1000000, 1152000, 1500000,
+					 2000000, 2500000, 3000000, 3500000, 4000000 };
+	return (code & CBAUDEX) ? hi[code & 017] : lo[code & 017];
+}
 
 // Our SIGSYS sigaction. A raw rt_sigaction with SA_RESTORER makes sigreturn
 // go through sig_restorer (in the exempt range), as in phase 1. Kept global so
@@ -252,6 +582,62 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx);
 static struct kernel_sigaction g_ka = { (void *)sigsys_handler, SA_SIGINFO | SA_RESTORER,
 					(void *)sig_restorer, 0 };
 
+// Canonicalise the path in r[pa] (dirfd in r[da], or the cwd if da < 0) into
+// buf and point r[pa] at the result. On error, fail the syscall with it.
+static int fix(unsigned long *r, int da, int pa, int follow, char *buf)
+{
+	const char *res;
+	long dirfd = da < 0 ? AT_FDCWD : (long)(int)r[da];
+	long e = canon(dirfd, (const char *)r[pa], follow, buf, &res);
+	if (e < 0) {
+		r[0] = (unsigned long)e;
+		return -1;
+	}
+	r[pa] = (unsigned long)res;
+	return 0;
+}
+
+#define FIX(da, pa, follow, buf)                    \
+	do {                                        \
+		if (fix(r, (da), (pa), (follow), (buf))) \
+			return;                     \
+	} while (0)
+
+// AF_UNIX socket path (bind creates it: no follow; connect follows).
+static int fix_sockaddr(unsigned long *r, int follow, char *buf, char *sabuf)
+{
+	const char *sa = (const char *)r[1];
+	long len = (long)r[2];
+	if (!sa || len <= 2 || *(const uint16_t *)sa != AF_UNIX || sa[2] == 0)
+		return 0;  // not a pathname socket (abstract, unnamed, other family)
+	long pl = 0;
+	while (2 + pl < len && sa[2 + pl])
+		pl++;
+	if (pl >= PATHBUF) {
+		r[0] = (unsigned long)-ENAMETOOLONG;
+		return -1;
+	}
+	char path[pl + 1];
+	memcpy(path, sa + 2, (size_t)pl);
+	path[pl] = 0;
+	const char *res;
+	long e = canon(AT_FDCWD, path, follow, buf, &res);
+	if (e < 0) {
+		r[0] = (unsigned long)e;
+		return -1;
+	}
+	size_t rl = zlen(res);
+	if (rl >= 108) {  // sizeof sun_path
+		r[0] = (unsigned long)-ENAMETOOLONG;
+		return -1;
+	}
+	*(uint16_t *)sabuf = AF_UNIX;
+	memcpy(sabuf + 2, res, rl + 1);
+	r[1] = (unsigned long)sabuf;
+	r[2] = 2 + rl + 1;
+	return 0;
+}
+
 static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 {
 	(void)sig;
@@ -261,74 +647,168 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 
 	if (g_debug) {
 		out(2, "[pid ");
-		outn(2, raw_syscall6(SYS_getpid, 0, 0, 0, 0, 0, 0));
+		outn(2, SYS0(SYS_getpid));
 		out(2, "] t nr=");
 		outn(2, nr);
+		out(2, " a0=");
+		outn(2, (long)r[0]);
+		out(2, " a1=");
+		outn(2, (long)r[1]);
+		out(2, " a2=");
+		outn(2, (long)r[2]);
 		out(2, "\n");
 	}
 
 	switch (nr) {
-	// path at arg1, dirfd at arg0 (or AT_FDCWD); relative paths pass through.
-	// openat(2): follow absolute /nix symlink chains ourselves.
-	case SYS_openat:
-	case SYS_openat2:
-		r[1] = (unsigned long)translate((const char *)r[1], b1);
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		return;
-
+	// One path at arg1 with its dirfd at arg0. The final component is
+	// followed as the kernel would for each syscall and its flags.
+	case SYS_openat: {
+		int f = (int)r[2];
+		FIX(0, 1, !(f & O_NOFOLLOW) && (f & (O_CREAT | O_EXCL)) != (O_CREAT | O_EXCL), b1);
+		break;
+	}
+	case SYS_openat2: {
+		// struct open_how { u64 flags, mode, resolve; }. With RESOLVE_*
+		// flags the kernel must do the walk itself to enforce them, so
+		// the path is only translated lexically: a "/nix"-absolute
+		// symlink inside it is then not re-translated.
+		const uint64_t *how = (const uint64_t *)r[2];
+		if (how && r[3] >= 24 && how[2]) {
+			r[1] = (unsigned long)xlate((const char *)r[1], b1);
+			break;
+		}
+		int f = how ? (int)how[0] : 0;
+		FIX(0, 1, !(f & O_NOFOLLOW) && (f & (O_CREAT | O_EXCL)) != (O_CREAT | O_EXCL), b1);
+		break;
+	}
 	case SYS_newfstatat:
-	case SYS_statx:
-	case SYS_faccessat:
-	case SYS_faccessat2:
-	case SYS_mkdirat:
-	case SYS_unlinkat:
-	case SYS_mknodat:
-	case SYS_fchownat:
-	case SYS_fchmodat:
 	case SYS_utimensat:
-		r[1] = (unsigned long)xlate((const char *)r[1], b1);
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		return;
+		FIX(0, 1, !(r[3] & AT_SYMLINK_NOFOLLOW), b1);
+		break;
+	case SYS_statx:
+	case SYS_open_tree:
+	case SYS_open_tree_attr:
+	case SYS_mount_setattr:
+	case SYS_setxattrat:
+	case SYS_getxattrat:
+	case SYS_listxattrat:
+	case SYS_removexattrat:
+		FIX(0, 1, !(r[2] & AT_SYMLINK_NOFOLLOW), b1);
+		break;
+	case SYS_faccessat2:
+	case SYS_fchmodat2:
+		FIX(0, 1, !(r[3] & AT_SYMLINK_NOFOLLOW), b1);
+		break;
+	case SYS_fchownat:
+	case SYS_file_getattr:
+	case SYS_file_setattr:
+		FIX(0, 1, !(r[4] & AT_SYMLINK_NOFOLLOW), b1);
+		break;
+	case SYS_faccessat:
+	case SYS_fchmodat:
+		FIX(0, 1, 1, b1);
+		break;
+	case SYS_mkdirat:
+	case SYS_mknodat:
+	case SYS_unlinkat:
+		FIX(0, 1, 0, b1);
+		break;
+	case SYS_name_to_handle_at:
+		FIX(0, 1, (r[4] & AT_SYMLINK_FOLLOW) != 0, b1);
+		break;
+	case SYS_fspick:
+		FIX(0, 1, !(r[2] & 0x2 /* FSPICK_SYMLINK_NOFOLLOW */), b1);
+		break;
 
-	// path at arg0.
+	// One path at arg0, relative to the cwd.
 	case SYS_chdir:
+	case SYS_chroot:
 	case SYS_truncate:
 	case SYS_statfs:
+	case SYS_acct:
+	case SYS_swapon:
+	case SYS_swapoff:
 	case SYS_getxattr:
-	case SYS_lgetxattr:
 	case SYS_setxattr:
-	case SYS_lsetxattr:
 	case SYS_listxattr:
-	case SYS_llistxattr:
 	case SYS_removexattr:
+		FIX(-1, 0, 1, b1);
+		break;
+	case SYS_lgetxattr:
+	case SYS_lsetxattr:
+	case SYS_llistxattr:
 	case SYS_lremovexattr:
-		r[0] = (unsigned long)xlate((const char *)r[0], b1);
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		return;
+		FIX(-1, 0, 0, b1);
+		break;
+	case SYS_umount2:
+		FIX(-1, 0, !(r[1] & 0x8 /* UMOUNT_NOFOLLOW */), b1);
+		break;
 
-	// two paths: arg1 (old) and arg3 (new).
+	// Paths elsewhere.
+	case SYS_inotify_add_watch:
+		FIX(-1, 1, !(r[2] & 0x02000000 /* IN_DONT_FOLLOW */), b1);
+		break;
+	case SYS_fanotify_mark:  // (fd, flags, mask, dirfd, path)
+		FIX(3, 4, !(r[1] & 0x4 /* FAN_MARK_DONT_FOLLOW */), b1);
+		break;
+	case SYS_quotactl:  // (cmd, special, id, addr); Q_QUOTAON's addr is a path
+		FIX(-1, 1, 1, b1);
+		if ((r[0] >> 8) == 0x800002 /* Q_QUOTAON */)
+			FIX(-1, 3, 1, b2);
+		break;
+	case SYS_fsconfig:  // (fd, cmd, key, value, aux)
+		if (r[1] == 3 /* FSCONFIG_SET_PATH */ || r[1] == 4 /* _SET_PATH_EMPTY */)
+			FIX(4, 3, 1, b1);
+		break;
+	case SYS_mount:  // (source, target, type, flags, data)
+		// The source is a path only for bind and move mounts; otherwise
+		// its meaning belongs to the filesystem type and it is left as is.
+		if (r[3] & (MS_BIND | MS_MOVE))
+			FIX(-1, 0, 1, b1);
+		FIX(-1, 1, 1, b2);
+		break;
+	case SYS_pivot_root:
+		FIX(-1, 0, 1, b1);
+		FIX(-1, 1, 1, b2);
+		break;
+
+	// Two paths: (olddirfd, old, newdirfd, new, ...). Neither final
+	// component is followed, except linkat's old with AT_SYMLINK_FOLLOW.
 	case SYS_linkat:
+		FIX(0, 1, (r[4] & AT_SYMLINK_FOLLOW) != 0, b1);
+		FIX(2, 3, 0, b2);
+		break;
 	case SYS_renameat:
 	case SYS_renameat2:
-		r[1] = (unsigned long)xlate((const char *)r[1], b1);
-		r[3] = (unsigned long)xlate((const char *)r[3], b2);
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		return;
-
-	// symlinkat(target, newdirfd, linkpath): translate only the linkpath
-	// (arg2). The target (arg0) is literal symlink content, left as-is.
+		FIX(0, 1, 0, b1);
+		FIX(2, 3, 0, b2);
+		break;
+	case SYS_move_mount:  // (from_dfd, from, to_dfd, to, flags)
+		FIX(0, 1, (r[4] & 0x1 /* MOVE_MOUNT_F_SYMLINKS */) != 0, b1);
+		FIX(2, 3, (r[4] & 0x10 /* MOVE_MOUNT_T_SYMLINKS */) != 0, b2);
+		break;
+	// symlinkat(target, newdirfd, linkpath): only the linkpath is a path
+	// to resolve. The target is literal link content and stays as written
+	// (e.g. "/nix/store/..."): the handler re-translates it when the link
+	// is followed, and readlink returns it unchanged, as proot does.
 	case SYS_symlinkat:
-		r[2] = (unsigned long)xlate((const char *)r[2], b2);
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		return;
+		FIX(1, 2, 0, b1);
+		break;
+
+	case SYS_bind:
+	case SYS_connect:
+		if (fix_sockaddr(r, nr == SYS_connect, b1, b2))
+			return;
+		break;
 
 	// readlinkat(dirfd, path, buf, bufsiz): /proc/self/exe reports the
-	// target; otherwise translate the path and reverse-translate the result.
+	// target; otherwise translate the path and reverse-translate the result
+	// (a /proc magic link reports a host path).
 	case SYS_readlinkat: {
 		const char *path = (const char *)r[1];
 		char *ubuf = (char *)r[2];
 		long sz = (long)r[3];
-		if (is_proc_self_exe(path)) {
+		if (path && strcmp(path, "/proc/self/exe") == 0) {
 			long n = (long)zlen(g_target);
 			if (n > sz)
 				n = sz;
@@ -336,7 +816,7 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 			r[0] = (unsigned long)n;
 			return;
 		}
-		r[1] = (unsigned long)xlate(path, b1);
+		FIX(0, 1, 0, b1);
 		long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
 		if (ret > 0)
 			ret = unxlate(ubuf, ret);
@@ -363,8 +843,7 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 	case SYS_rt_sigaction:
 		if ((int)r[0] == SIGSYS && r[1])
 			r[1] = (unsigned long)&g_ka;
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
-		return;
+		break;
 
 	// Never let SIGSYS be blocked: a seccomp trap on a blocked SIGSYS is
 	// force-killed. bash blocks signals around fork, so without this its
@@ -378,35 +857,89 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 			memcpy(b1, &set, 8);
 			r[1] = (unsigned long)b1;
 		}
-		r[0] = SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
+		break;
+
+	// Android's app SELinux policy allows only the classic termios ioctls on
+	// ttys (TCGETS, TCSETS, TCSETSW, TCFLSH), but glibc >= 2.42 issues the
+	// termios2 forms (nix's builder pty fails with EACCES otherwise).
+	// Rewrite them as proot does on Android: struct termios is the first 36
+	// bytes of struct termios2; TCGETS2 derives its two speed fields from the
+	// CBAUD bits; TCSETSF(2) becomes TCFLSH(TCIFLUSH) + TCSETSW. An arbitrary
+	// (BOTHER) speed cannot be expressed this way and is not carried over.
+	case SYS_ioctl: {
+		uint32_t cmd = (uint32_t)r[1];
+		long fd = (long)(int)r[0];
+		char *t = (char *)r[2];
+		long e;
+		if (cmd == TCGETS2) {
+			e = SYS3(SYS_ioctl, fd, TCGETS, t);
+			if (e == 0) {
+				uint32_t cflag, is, os;
+				memcpy(&cflag, t + 8, 4);
+				os = baud(cflag & CBAUD);
+				is = (cflag >> 16) & CBAUD ? baud((cflag >> 16) & CBAUD) : os;
+				memcpy(t + 36, &is, 4);
+				memcpy(t + 40, &os, 4);
+			}
+		} else if (cmd == TCSETS2) {
+			e = SYS3(SYS_ioctl, fd, TCSETS, t);
+		} else if (cmd == TCSETSW2) {
+			e = SYS3(SYS_ioctl, fd, TCSETSW, t);
+		} else {  // TCSETSF, TCSETSF2
+			e = SYS3(SYS_ioctl, fd, TCFLSH, TCIFLUSH);
+			if (e == 0)
+				e = SYS3(SYS_ioctl, fd, TCSETSW, t);
+		}
+		r[0] = (unsigned long)e;
+		return;
+	}
+
+	// clone3 cannot be supported in-process: its CLONE_CLEAR_SIGHAND (used
+	// by glibc's posix_spawn) would drop our SIGSYS handler in the child,
+	// and a clone3 with a new stack cannot be reissued from inside the
+	// handler (the child would return into handler frames on an empty
+	// stack). Fail it with ENOSYS, as seccomp sandboxes commonly do; glibc
+	// and musl then fall back to clone(), which runs untrapped and keeps
+	// the handler.
+	case SYS_clone3:
+		r[0] = (unsigned long)-ENOSYS;
 		return;
 
+	// The new image is started by re-exec'ing the loader with the guest
+	// target path; it canonicalises the path itself against the same cwd.
 	case SYS_execve:
 		r[0] = (unsigned long)reexec((const char *)r[0], (char **)r[1], (char **)r[2]);
 		return;
 
-	// execveat(dirfd, path, argv, envp, flags).
+	// execveat(dirfd, path, argv, envp, flags): turn (dirfd, path) into an
+	// absolute guest path, since the dirfd may not survive the re-exec.
 	case SYS_execveat: {
 		const char *path = (const char *)r[1];
-		char fdpath[64];
-		if (r[4] & AT_EMPTY_PATH) {
-			// fexecve: resolve the fd to a real path via /proc/self/fd.
-			memcpy(fdpath, "/proc/self/fd/", 14);
-			utoa((unsigned long)(long)r[0], fdpath + 14);
-			char real[PATHBUF];
-			long n = SYS4(SYS_readlinkat, (long)-100 /*AT_FDCWD*/, fdpath, real,
-				      sizeof real - 1);
-			if (n <= 0)
-				die("execveat(AT_EMPTY_PATH): cannot resolve fd");
-			real[n] = 0;
-			r[0] = (unsigned long)reexec(real, (char **)r[2], (char **)r[3]);
+		int flags = (int)r[4];
+		if (!path || (!*path && !(flags & AT_EMPTY_PATH))) {
+			r[0] = (unsigned long)(path ? -ENOENT : -EFAULT);
 			return;
 		}
-		if (path && path[0] == '/') {
-			r[0] = (unsigned long)reexec(path, (char **)r[2], (char **)r[3]);
+		if (flags & AT_SYMLINK_NOFOLLOW) {
+			const char *h;
+			long e = canon((long)(int)r[0], path, 0, b1, &h);
+			if (e < 0) {
+				r[0] = (unsigned long)e;
+				return;
+			}
+			char one;
+			if (SYS4(SYS_readlinkat, (long)(int)r[0], h, &one, 1) >= 0) {
+				r[0] = (unsigned long)-ELOOP;
+				return;
+			}
+		}
+		long e = guest_abs((long)(int)r[0], path, b2, &path);
+		if (e < 0) {
+			r[0] = (unsigned long)e;
 			return;
 		}
-		die("execveat with a dirfd-relative path is not supported");
+		r[0] = (unsigned long)reexec(path, (char **)r[2], (char **)r[3]);
+		return;
 	}
 
 	default:
@@ -420,11 +953,12 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		r[0] = (unsigned long)-ENOSYS;
 		return;
 	}
+	r[0] = (unsigned long)SYS6(nr, r[0], r[1], r[2], r[3], r[4], r[5]);
 }
 
 static void install_handler(void)
 {
-	if (raw_syscall6(SYS_rt_sigaction, SIGSYS, (long)&g_ka, 0, 8, 0, 0) < 0)
+	if (SYS4(SYS_rt_sigaction, SIGSYS, &g_ka, 0, 8) < 0)
 		die("rt_sigaction(SIGSYS) failed");
 }
 
@@ -435,23 +969,33 @@ static void install_handler(void)
 static void unblock_sigsys(void)
 {
 	uint64_t set = 1ULL << (SIGSYS - 1);
-	raw_syscall6(SYS_rt_sigprocmask, 1 /*SIG_UNBLOCK*/, (long)&set, 0, 8, 0, 0);
+	SYS4(SYS_rt_sigprocmask, 1 /*SIG_UNBLOCK*/, &set, 0, 8);
 }
 
 // ---- seccomp filter ----------------------------------------------------
 
-// Every path-taking syscall we translate, plus execve/execveat, chdir,
-// getcwd and readlinkat. getpid/read/write/close/mmap/... are left untrapped.
+// Every syscall on aarch64 (asm-generic table) that takes a path or a
+// dirfd+path, plus getcwd, execve/execveat, rt_sigaction/rt_sigprocmask and
+// clone3 (and ioctl, but only for the termios cmds in traced_ioctls).
+// Not handled (documented in RESULTS.md): unix datagram destinations in
+// sendto/sendmsg/sendmmsg, paths inside bpf() attrs, and the removed,
+// privileged lookup_dcookie. Everything else is left untrapped.
 static const int traced[] = {
-	SYS_openat,    SYS_openat2,     SYS_newfstatat,  SYS_statx,
-	SYS_faccessat, SYS_faccessat2,  SYS_readlinkat,  SYS_execve,
-	SYS_execveat,  SYS_chdir,       SYS_getcwd,      SYS_mkdirat,
-	SYS_unlinkat,  SYS_mknodat,     SYS_fchownat,    SYS_fchmodat,
-	SYS_utimensat, SYS_linkat,      SYS_renameat,    SYS_renameat2,
-	SYS_symlinkat, SYS_truncate,    SYS_statfs,      SYS_getxattr,
-	SYS_lgetxattr, SYS_setxattr,    SYS_lsetxattr,   SYS_listxattr,
-	SYS_llistxattr,SYS_removexattr, SYS_lremovexattr, SYS_rt_sigaction,
-	SYS_rt_sigprocmask,
+	SYS_setxattr,     SYS_lsetxattr,      SYS_getxattr,       SYS_lgetxattr,
+	SYS_listxattr,    SYS_llistxattr,     SYS_removexattr,    SYS_lremovexattr,
+	SYS_getcwd,       SYS_inotify_add_watch, SYS_mknodat,     SYS_mkdirat,
+	SYS_unlinkat,     SYS_symlinkat,      SYS_linkat,         SYS_renameat,
+	SYS_umount2,      SYS_mount,          SYS_pivot_root,     SYS_statfs,
+	SYS_truncate,     SYS_faccessat,      SYS_chdir,          SYS_chroot,
+	SYS_fchmodat,     SYS_fchownat,       SYS_openat,         SYS_quotactl,
+	SYS_readlinkat,   SYS_newfstatat,     SYS_utimensat,      SYS_acct,
+	SYS_bind,         SYS_connect,        SYS_execve,         SYS_swapon,
+	SYS_swapoff,      SYS_fanotify_mark,  SYS_name_to_handle_at, SYS_renameat2,
+	SYS_execveat,     SYS_statx,          SYS_open_tree,      SYS_move_mount,
+	SYS_fsconfig,     SYS_fspick,         SYS_openat2,        SYS_faccessat2,
+	SYS_mount_setattr, SYS_fchmodat2,     SYS_setxattrat,     SYS_getxattrat,
+	SYS_listxattrat,  SYS_removexattrat,  SYS_open_tree_attr, SYS_file_getattr,
+	SYS_file_setattr, SYS_rt_sigaction,   SYS_rt_sigprocmask, SYS_clone3,
 };
 #define NTRACED (int)(sizeof traced / sizeof traced[0])
 
@@ -461,25 +1005,32 @@ static void install_filter(void)
 	if ((lo >> 32) != (hi >> 32))
 		die("exempt stub range crosses a 4GiB boundary");
 
-	// Layout: arch check, load nr, one JEQ per traced syscall (match ->
-	// jump to the IP-range check), else ALLOW; the IP-range check ALLOWs
-	// the exempt stub and TRAPs everything else. Fixed part is 12
-	// instructions (4 prologue + 1 no-match ALLOW + 7 IP-range check).
-	struct sock_filter f[12 + NTRACED];
+	// Layout: arch check; load nr; one JEQ per traced syscall (match ->
+	// IPCHK); ioctl? load the cmd and one JEQ per traced cmd (match ->
+	// IPCHK); else ALLOW. IPCHK ALLOWs the exempt stub, TRAPs the rest.
+	enum { ALLOW = 4 + NTRACED + 2 + NIOCTLS, IPCHK = ALLOW + 1, LEN = IPCHK + 7 };
+	struct sock_filter f[LEN];
 	int k = 0;
+#define TO(t) ((t) - k - 1)  // relative jump from instruction k to index t
 	f[k++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
 					      offsetof(struct seccomp_data, arch));
 	f[k++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_AARCH64, 1, 0);
 	f[k++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
 	f[k++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
 					      offsetof(struct seccomp_data, nr));
-	// For compare i (0-based), skip (NTRACED - i) instructions on a match to
-	// land exactly on the IP-range check (past the remaining compares and
-	// the no-match ALLOW).
-	for (int i = 0; i < NTRACED; i++)
-		f[k++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, traced[i],
-						      NTRACED - i, 0);
+	for (int i = 0; i < NTRACED; i++, k++)
+		f[k] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, traced[i],
+						    TO(IPCHK), 0);
+	f[k] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_ioctl, 0, TO(ALLOW));
+	k++;
+	// The cmd is an unsigned int: its low 32 bits (little endian) decide.
+	f[k++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+					      offsetof(struct seccomp_data, args[1]));
+	for (int i = 0; i < NIOCTLS; i++, k++)
+		f[k] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, traced_ioctls[i],
+						    TO(IPCHK), 0);
 	f[k++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+#undef TO
 	// IP-range check (verified in phase 1).
 	f[k++] = (struct sock_filter)BPF_STMT(
 		BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 4);
@@ -490,6 +1041,8 @@ static void install_filter(void)
 	f[k++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, (uint32_t)hi, 1, 0);
 	f[k++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
 	f[k++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP);
+	if (k != LEN)
+		die("internal error: filter length");
 
 	struct sock_fprog prog = { (unsigned short)k, f };
 	if (SYS3(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &prog) != 0)
@@ -508,12 +1061,6 @@ struct loaded {
 	int has_interp;
 };
 
-static long xopen(const char *path)
-{
-	char b[PATHBUF];
-	return SYS4(SYS_openat, (long)-100 /*AT_FDCWD*/, translate(path, b), 0 /*O_RDONLY*/, 0);
-}
-
 static void xpread(int fd, void *buf, size_t n, off_t off, const char *what)
 {
 	long r = SYS4(SYS_pread64, fd, buf, n, off);
@@ -521,20 +1068,13 @@ static void xpread(int fd, void *buf, size_t n, off_t off, const char *what)
 		die2("short read of ", what);
 }
 
-static void *xmmap(void *addr, size_t len, int prot, int flags, int fd, off_t off)
+static long xmmap(void *addr, size_t len, int prot, int flags, int fd, off_t off)
 {
 	long r = SYS6(SYS_mmap, addr, len, prot, flags, fd, off);
 	if (r < 0 && r > -4096)
-		die("mmap failed");
-	return (void *)r;
+		die_errno("mmap failed", "", r);
+	return r;
 }
-
-#define MAP_PRIVATE 0x02
-#define MAP_FIXED 0x10
-#define MAP_ANON 0x20
-#define PROT_READ 1
-#define PROT_WRITE 2
-#define PROT_EXEC 4
 
 static int seg_prot(uint32_t flags)
 {
@@ -548,34 +1088,31 @@ static int seg_prot(uint32_t flags)
 	return p;
 }
 
+// Map an ELF (guest path) like the kernel's load_elf_binary: a PIE (ET_DYN)
+// anywhere the kernel picks, a non-PIE (ET_EXEC) at its own link addresses.
+// The loader itself is linked high (Makefile), out of the ET_EXEC range.
 static void load_elf(const char *path, struct loaded *l)
 {
 	memset(l, 0, sizeof *l);
-	long fd = xopen(path);
-	if (fd < 0) {
-		out(2, "sud-loader: cannot open ");
-		out(2, path);
-		out(2, " errno=");
-		outn(2, -fd);
-		out(2, "\n");
-		SYS1(SYS_exit_group, 127);
-	}
+	char b[PATHBUF];
+	const char *h;
+	long fd = canon(AT_FDCWD, path, 1, b, &h);
+	if (fd == 0)
+		fd = SYS4(SYS_openat, AT_FDCWD, h, O_RDONLY | O_CLOEXEC, 0);
+	if (fd < 0)
+		die_errno("cannot open ", path, fd);
 
 	Elf64_Ehdr eh;
 	xpread(fd, &eh, sizeof eh, 0, "ELF header");
 	if (memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 || eh.e_ident[EI_CLASS] != ELFCLASS64 ||
 	    eh.e_machine != EM_AARCH64)
 		die2("not an aarch64 ELF64: ", path);
-	// Only PIE (ET_DYN) targets are supported: a non-PIE ET_EXEC loads at
-	// its own fixed vaddr (typically 0x400000), which collides with this
-	// non-PIE loader's own image. Supporting it needs the loader linked out
-	// of the way (a high fixed address). gcc's bootstrap xgcc is ET_EXEC.
-	if (eh.e_type != ET_DYN)
-		die2("unsupported non-PIE (ET_EXEC) target; only PIE is supported: ", path);
-	if (eh.e_phnum == 0 || eh.e_phnum > 128)
-		die2("bad e_phnum in ", path);
+	if (eh.e_type != ET_DYN && eh.e_type != ET_EXEC)
+		die2("not an executable (ET_EXEC/ET_DYN): ", path);
+	if (eh.e_phnum == 0 || eh.e_phentsize != sizeof(Elf64_Phdr))
+		die2("bad program headers in ", path);
 
-	Elf64_Phdr ph[128];
+	Elf64_Phdr ph[eh.e_phnum];
 	xpread(fd, ph, (size_t)eh.e_phnum * sizeof ph[0], eh.e_phoff, "program headers");
 
 	// span of all PT_LOAD segments
@@ -593,11 +1130,22 @@ static void load_elf(const char *path, struct loaded *l)
 	minv = PAGE_DOWN(minv);
 	maxv = PAGE_UP(maxv);
 
-	// Reserve the whole span so the segments stay contiguous, letting the
-	// kernel pick a high base that cannot collide with the non-PIE loader at
-	// its fixed low address.
-	void *res = xmmap(0, maxv - minv, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);
-	unsigned long bias = (unsigned long)res - minv;
+	// Reserve the whole span so the segments stay contiguous: a PIE where
+	// the kernel picks, a non-PIE exactly at its vaddr. MAP_FIXED_NOREPLACE
+	// fails with EEXIST instead of overwriting anything already there.
+	unsigned long bias;
+	if (eh.e_type == ET_DYN) {
+		bias = (unsigned long)xmmap(0, maxv - minv, PROT_NONE,
+					    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) - minv;
+	} else {
+		long res = SYS6(SYS_mmap, minv, maxv - minv, PROT_NONE,
+				MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+		if (res < 0 && res > -4096)
+			die_errno("cannot map the non-PIE image at its link address: ", path, res);
+		if ((unsigned long)res != minv)
+			die2("kernel ignored MAP_FIXED_NOREPLACE for ", path);
+		bias = 0;
+	}
 
 	for (int i = 0; i < eh.e_phnum; i++) {
 		if (ph[i].p_type != PT_LOAD)
@@ -620,7 +1168,7 @@ static void load_elf(const char *path, struct loaded *l)
 			memset((void *)bss, 0, fend - bss);  // tail of the last file page
 			if (mend > fend)
 				xmmap((void *)fend, mend - fend, prot,
-				      MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);
+				      MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
 			if (mprot != prot && fend > start)
 				SYS3(SYS_mprotect, start, fend - start, prot);
 		}
@@ -628,14 +1176,24 @@ static void load_elf(const char *path, struct loaded *l)
 
 	l->base = bias;
 	l->entry = bias + eh.e_entry;
-	l->phdr = bias + eh.e_phoff;  // e_phoff lies inside the first PT_LOAD
 	l->phnum = eh.e_phnum;
 	l->phent = eh.e_phentsize;
+	// AT_PHDR: PT_PHDR if present, else the PT_LOAD that holds e_phoff.
+	for (int i = 0; i < eh.e_phnum; i++) {
+		if (ph[i].p_type == PT_PHDR) {
+			l->phdr = bias + ph[i].p_vaddr;
+			break;
+		}
+		if (ph[i].p_type == PT_LOAD && !l->phdr && eh.e_phoff >= ph[i].p_offset &&
+		    eh.e_phoff < ph[i].p_offset + ph[i].p_filesz)
+			l->phdr = bias + ph[i].p_vaddr + (eh.e_phoff - ph[i].p_offset);
+	}
+	if (!l->phdr)
+		die2("program headers are not mapped in ", path);
 
 	for (int i = 0; i < eh.e_phnum; i++) {
-		if (ph[i].p_type != PT_INTERP) {
+		if (ph[i].p_type != PT_INTERP)
 			continue;
-		}
 		if (ph[i].p_filesz >= sizeof l->interp)
 			die2("PT_INTERP too long in ", path);
 		xpread(fd, l->interp, ph[i].p_filesz, ph[i].p_offset, "PT_INTERP");
@@ -661,7 +1219,8 @@ static unsigned long auxval(unsigned long *av, unsigned long type)
 static void *build_stack(int targc, char **targv, char **envp, unsigned long *our_auxv,
 			 struct loaded *exe, struct loaded *interp)
 {
-	char *stk = xmmap(0, STACK_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	char *stk = (char *)xmmap(0, STACK_SIZE, PROT_READ | PROT_WRITE,
+				  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	char *top = stk + STACK_SIZE;
 
 	int nenv = 0;
@@ -692,9 +1251,9 @@ static void *build_stack(int targc, char **targv, char **envp, unsigned long *ou
 	unsigned long rnd = auxval(our_auxv, AT_RANDOM);
 	if (rnd)
 		memcpy(p_random, (void *)rnd, 16);
-	size_t tn = zlen(g_target) + 1;  // AT_EXECFN
+	size_t tn = zlen(g_execfn) + 1;  // AT_EXECFN
 	s -= tn;
-	memcpy(s, g_target, tn);
+	memcpy(s, g_execfn, tn);
 	char *p_execfn = s;
 
 	// auxv: fixed set below (count the pairs, including AT_NULL).
@@ -751,66 +1310,6 @@ static void *build_stack(int targc, char **targv, char **envp, unsigned long *ou
 	return sp;
 }
 
-// ---- shebang (#!) handling ---------------------------------------------
-
-// If *target names a "#!" script, rewrite *target/*argv to run its
-// interpreter instead, as the kernel's binfmt_script would, but translating
-// the interpreter's /nix path. Loops for a bounded number of nested scripts.
-static char sheb_line[4][256];
-static char *sheb_argv[4][96];
-
-static void expand_shebang(const char **target, char ***pargv, int *pargc)
-{
-	for (int it = 0; it < 4; it++) {
-		char b[PATHBUF];
-		long fd = SYS4(SYS_openat, (long)-100, translate(*target, b), 0, 0);
-		if (fd < 0)
-			return;
-		char *line = sheb_line[it];
-		long n = SYS3(SYS_read, fd, line, 255);
-		SYS1(SYS_close, fd);
-		if (n < 2 || line[0] != '#' || line[1] != '!')
-			return;
-		line[n] = 0;
-		for (char *q = line; *q; q++)
-			if (*q == '\n') {
-				*q = 0;
-				break;
-			}
-		char *p = line + 2;
-		while (*p == ' ' || *p == '\t')
-			p++;
-		char *interp = p;
-		while (*p && *p != ' ' && *p != '\t')
-			p++;
-		char *arg = 0;
-		if (*p) {
-			*p++ = 0;
-			while (*p == ' ' || *p == '\t')
-				p++;
-			if (*p) {
-				arg = p;
-				char *q = p + zlen(p);
-				while (q > p && (q[-1] == ' ' || q[-1] == '\t' || q[-1] == '\r'))
-					*--q = 0;
-			}
-		}
-		// New argv: interp [arg] script origargs...  (drop the script's argv0)
-		char **A = sheb_argv[it];
-		int k = 0;
-		A[k++] = interp;
-		if (arg)
-			A[k++] = arg;
-		A[k++] = (char *)*target;
-		for (int j = 1; j < *pargc && k < 94; j++)
-			A[k++] = (*pargv)[j];
-		A[k] = 0;
-		*target = interp;
-		*pargv = A;
-		*pargc = k;
-	}
-}
-
 // ---- entry -------------------------------------------------------------
 
 int main(int argc, char **argv, char **envp)
@@ -828,27 +1327,29 @@ int main(int argc, char **argv, char **envp)
 	if (pfx && *pfx)
 		g_prefix = pfx;
 	g_prefixlen = zlen(g_prefix);
+	if (g_prefixlen >= PATHBUF / 2)
+		die("SUD_PREFIX is too long");
 
+	// A re-exec from our own execve handler: the filter is already there.
+	int first = !(argc > 1 && strcmp(argv[1], "--reexec") == 0);
+	if (!first) {
+		argv++;
+		argc--;
+	}
 	if (argc < 2)
 		die("usage: loader <target> [argv0 argv1 ...]   (target may be a /nix/store path)");
 
-	g_target = argv[1];
+	const char *target = argv[1];
+	g_execfn = target;
 
 	// This loader's own real path, for re-exec on a trapped execve.
 	static char self[PATHBUF];
-	long sn = SYS4(SYS_readlinkat, (long)-100 /*AT_FDCWD*/, "/proc/self/exe", self,
-		       sizeof self - 1);
+	long sn = SYS4(SYS_readlinkat, AT_FDCWD, "/proc/self/exe", self, sizeof self - 1);
 	if (sn <= 0)
 		die("cannot readlink /proc/self/exe");
 	self[sn] = 0;
 	g_launcher = self;
 
-	// The target's argv: explicit args if given, else just the target path.
-	int targc = (argc > 2) ? argc - 2 : 1;
-	char *one[1] = { (char *)g_target };
-	char **targv = (argc > 2) ? &argv[2] : one;
-
-	int first = getenv("SUD_LOADER_ACTIVE") == NULL;
 	g_debug = getenv("SUD_DEBUG") != NULL;
 
 	// Handler before the filter, so no trapped syscall can arrive unhandled.
@@ -859,22 +1360,61 @@ int main(int argc, char **argv, char **envp)
 			die("prctl(NO_NEW_PRIVS) failed");
 		install_filter();
 	}
-	// Mark the process tree so a re-exec does not stack a second filter.
-	setenv("SUD_LOADER_ACTIVE", "1", 1);
-	// Rebuild envp: setenv may have reallocated environ.
-	extern char **environ;
-	envp = environ;
 
-	// Run "#!" scripts by loading their (translated) interpreter.
-	expand_shebang(&g_target, &targv, &targc);
+	long e = exec_check(target);
+	if (e < 0)
+		die_errno("cannot execute ", target, e);
+
+	// The target's argv: explicit args if given, else just the target path.
+	// Kept at the end of A so each "#!" level can prepend interp [arg].
+	int targc = (argc > 2) ? argc - 2 : 1;
+	int s = 2 * MAX_INTERP_DEPTH;
+	char *A[s + targc + 1];
+	if (argc > 2)
+		memcpy(&A[s], &argv[2], (size_t)targc * sizeof A[0]);
+	else
+		A[s] = (char *)target;
+	A[s + targc] = 0;
+
+	// Run "#!" scripts by loading their interpreter, as binfmt_script does:
+	// argv becomes interp [arg] script args... (exec_check bounded the depth).
+	static char lines[MAX_INTERP_DEPTH][BINPRM_BUF_SIZE];
+	for (int d = 0; d < MAX_INTERP_DEPTH; d++) {
+		long n = read_head(target, lines[d], 0);
+		if (n < 2 || lines[d][0] != '#' || lines[d][1] != '!')
+			break;
+		char *arg, *interp = parse_shebang(lines[d], n, &arg);
+		A[s] = (char *)target;
+		if (arg)
+			A[--s] = arg;
+		A[--s] = interp;
+		target = interp;
+	}
+	targc = 0;
+	while (A[s + targc])
+		targc++;
+
+	// /proc/self/exe reports the canonical guest path of the image.
+	static char tg[PATHBUF];
+	char ab[PATHBUF];
+	const char *h;
+	e = guest_abs(AT_FDCWD, target, ab, &h);
+	if (e == 0)
+		e = canon(AT_FDCWD, h, 1, tg, &h);
+	if (e < 0)
+		die_errno("cannot resolve ", target, e);
+	if (h != tg)
+		memmove(tg, h, zlen(h) + 1);
+	unxlate(tg, (long)zlen(tg) + 1);
+	g_target = tg;
 
 	struct loaded exe, interp;
-	load_elf(g_target, &exe);
+	load_elf(target, &exe);
 	interp.has_interp = 0;
 	if (exe.has_interp)
 		load_elf(exe.interp, &interp);
 
-	void *sp = build_stack(targc, targv, envp, our_auxv, &exe, &interp);
+	void *sp = build_stack(targc, &A[s], envp, our_auxv, &exe, &interp);
 	unsigned long entry = exe.has_interp ? interp.entry : exe.entry;
 	jump_to((void *)entry, sp);
 }

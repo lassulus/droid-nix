@@ -1,5 +1,11 @@
 # In-process /nix interception on Android: phase 2 launcher (issue #1)
 
+> Phase 3 (non-PIE targets, full path canonicalisation, all path syscalls, a
+> real `nix-build` under the launcher) is in
+> [RESULTS-phase3.md](RESULTS-phase3.md). The scripts and `loader.c` in this
+> directory are the phase 3 versions. The phase 2 numbers below were measured
+> with the phase 2 loader (commit 5ec8905).
+
 Phase 1 showed that droid-nix's own processes can intercept their own path
 syscalls in-process with a seccomp `SECCOMP_RET_TRAP` filter and a SIGSYS
 handler, ~70–175× faster than proot per syscall, but that running real
@@ -27,9 +33,10 @@ nix build --impure --expr 'import ./experiments/sud-loader {
 | --- | --- |
 | `stub.S` | the exempt syscall instructions (`raw_syscall6`, `sig_restorer`) between `allow_start`/`allow_end`, plus `jump_to` |
 | `loader.c` | everything: seccomp filter, SIGSYS handler + path translation, userspace ELF loader, shebang handling, execve re-exec |
-| `Makefile`, `default.nix` | build (`-static -no-pie -fno-pie`) |
+| `Makefile`, `default.nix` | build (`-static -no-pie -fno-pie`, linked at 0x1000000000 since phase 3) |
 | `run-native.sh` | correctness + benchmarks, run in the failsafe (native) session |
 | `run-proot.sh` | the same benchmarks under proot |
+| `build.nix`, `build-native.sh`, `build-proot.sh` | phase 3: end-to-end `nix-build` of a C derivation, launcher vs proot |
 
 It is non-PIE and linked at a fixed address so its stub sits at the same
 address in every process; the one seccomp filter (which survives execve and
@@ -132,23 +139,24 @@ microbenchmarks diluted by real work and process startup.
 
 ## Limitations
 
-* **Non-PIE (`ET_EXEC`) targets are unsupported.** They load at their own fixed
-  vaddr (~0x400000), which collides with the non-PIE loader's own image; the
-  loader rejects them with a clear error rather than crashing. gcc's bootstrap
-  `xgcc`/`cc1` are `ET_EXEC`, so the gcc compile benchmark is not reached.
-  (hello, bash, coreutils, findutils, gnutar, nix are all PIE and work.) Fixing
-  this means linking the loader at a high fixed address out of the ET_EXEC
-  range.
-* **Symlink resolution is final-component only.** It follows a symlink chain at
-  the last component of an absolute path; interior `/nix`-absolute components
-  and dirfd-relative walks through such symlinks are not resolved. Full
-  per-component canonicalisation (what proot does) is the main remaining work.
-* **A program that installs its own SIGSYS handler or blocks SIGSYS by other
-  means would break**, because interception is in-process. proot (ptrace,
-  external) is immune to this; it is the fundamental trade-off of the approach.
-* The handler translates a single path argument per syscall and both paths for
-  link/rename; it does not yet cover every path-taking syscall or dirfd-relative
-  `/nix` resolution.
+Updated for phase 3. Phase 2's non-PIE, final-component-only and
+partial-coverage limitations are fixed (see
+[RESULTS-phase3.md](RESULTS-phase3.md)). What remains:
+
+* **Only `/nix` is translated.** proot's other binds (`/etc`, `/tmp`, `/bin`,
+  `/usr`, `/dev/shm`) are not. Natively there is no `/etc/resolv.conf`, and
+  nix needs `NIX_CONF_DIR`/`TMPDIR` set.
+* **clone3 always fails with ENOSYS** (CLONE_CLEAR_SIGHAND would drop the
+  handler). libcs fall back to clone().
+* **A program that installs its own SIGSYS handler or blocks SIGSYS by means we
+  do not trap would break**, because interception is in-process. proot
+  (ptrace, external) is immune to this. It is the fundamental trade-off of
+  the approach.
+* **Hard links are EACCES** (Android policy). There is no link2symlink
+  emulation.
+* Not handled: unix datagram sends to a path, bpffs paths, lookup_dcookie.
+  openat2 with RESOLVE_* is translated lexically only. `/proc/self/exe` is
+  answered for readlinkat only.
 
 ## What this means for issue #1
 
