@@ -28,12 +28,6 @@ with lib;
         readOnly = true;
         description = "Path to installation directory.";
       };
-
-      extraProotOptions = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        description = "Extra options passed to proot, e.g., extra bind mounts.";
-      };
     };
 
   };
