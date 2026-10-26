@@ -964,19 +964,29 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 			r[1] = (unsigned long)&g_ka;
 		break;
 
-	// Never let SIGSYS be blocked: a seccomp trap on a blocked SIGSYS is
-	// force-killed. bash blocks signals around fork, so without this its
-	// children die on their first trapped syscall. Clear SIGSYS from the
-	// requested set for SIG_BLOCK/SIG_SETMASK (how 0/2); leave UNBLOCK.
-	case SYS_rt_sigprocmask:
-		if (r[1] && ((int)r[0] == 0 || (int)r[0] == 2)) {
-			uint64_t set;
-			memcpy(&set, (void *)r[1], 8);
-			set &= ~(1ULL << (SIGSYS - 1));
-			memcpy(b1, &set, 8);
-			r[1] = (unsigned long)b1;
+	// Emulated on uc_sigmask, the mask sigreturn restores: reissued here it
+	// would only change the handler's own mask and be lost on return (bash
+	// blocks SIGTTOU around tcsetpgrp; without the block every job stops).
+	// SIGSYS is never blocked: a seccomp trap on a blocked SIGSYS is
+	// force-killed, and bash blocks signals around fork.
+	case SYS_rt_sigprocmask: {
+		int how = (int)r[0];
+		uint64_t old, set, *uc = (uint64_t *)&((ucontext_t *)ctx)->uc_sigmask;
+		if (r[3] != 8 || (r[1] && (how < 0 || how > 2))) {
+			r[0] = (unsigned long)-EINVAL;
+			return;
 		}
-		break;
+		old = *uc;
+		if (r[1]) {
+			memcpy(&set, (void *)r[1], 8);
+			set = how == 0 ? old | set : how == 1 ? old & ~set : set;
+			*uc = set & ~(1ULL << (SIGSYS - 1) | 1ULL << (SIGKILL - 1) | 1ULL << (SIGSTOP - 1));
+		}
+		if (r[2])
+			memcpy((void *)r[2], &old, 8);
+		r[0] = 0;
+		return;
+	}
 
 	// Android's app SELinux policy allows only the classic termios ioctls on
 	// ttys (TCGETS, TCSETS, TCSETSW, TCFLSH), but glibc >= 2.42 issues the
