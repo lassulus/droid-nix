@@ -1,19 +1,14 @@
-# The launcher (launcher.c) as a static aarch64-linux musl binary,
-# cross-compiled from x86_64-linux with nixpkgs' gcc cross toolchain. The
-# bootstrap ships it and on-device generations refer to the same store path,
-# so both take it from here.
-{ nixpkgs }:
+# The launcher (launcher.c) as a static aarch64-linux musl binary. Called
+# from pkgsCross.aarch64-multiplatform-musl.pkgsStatic (see ../default.nix),
+# i.e. cross-compiled with nixpkgs' gcc cross toolchain.
+{ lib, stdenv }:
 
-let
-  pkgs = (import nixpkgs { system = "x86_64-linux"; }).pkgsCross.aarch64-multiplatform-musl.pkgsStatic;
-in
-
-pkgs.stdenv.mkDerivation {
+stdenv.mkDerivation {
   name = "launcher";
 
-  src = pkgs.lib.fileset.toSource {
+  src = lib.fileset.toSource {
     root = ./.;
-    fileset = pkgs.lib.fileset.unions [ ./launcher.c ./stub.S ];
+    fileset = lib.fileset.unions [ ./launcher.c ./stub.S ];
   };
 
   hardeningDisable = [ "all" ];
@@ -24,7 +19,7 @@ pkgs.stdenv.mkDerivation {
   # default 0x400000) and below the mmap area of a 39-bit address space, so
   # the launcher can map ET_EXEC targets at their own link addresses.
   buildPhase = ''
-    ${pkgs.stdenv.cc.targetPrefix}cc -O2 -Wall -static -no-pie -fno-pie \
+    ${stdenv.cc.targetPrefix}cc -O2 -Wall -static -no-pie -fno-pie \
       -Wl,-Ttext-segment=0x1000000000 -o launcher launcher.c stub.S
   '';
 

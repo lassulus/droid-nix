@@ -1,0 +1,14 @@
+syscall(SYS_close_range, ...) needs <sys/syscall.h>, which glibc's headers
+pull in indirectly and musl's do not. Paths are relative to src/libutil (the
+nix-util component's sourceRoot).
+
+--- a/unix/file-descriptor.cc
++++ b/unix/file-descriptor.cc
+@@ -5,6 +5,7 @@
+
+ #include <fcntl.h>
+ #include <unistd.h>
++#include <sys/syscall.h>
+ #include <span>
+
+ #include "util-config-private.hh"

@@ -3,7 +3,9 @@
 { config, lib, initialPackageInfo, writeText }:
 
 let
-  inherit (initialPackageInfo) cacert nix;
+  # The bootstrap's static nix and busybox; its /bin/sh is busybox, so the
+  # initial build below is POSIX sh.
+  inherit (initialPackageInfo) busybox nix;
 
   nixCmd = "${nix}/bin/nix --extra-experimental-features 'flakes nix-command'";
   flakeDir = "${config.user.home}/.config/droid-nix";
@@ -40,22 +42,15 @@ writeText "login-inner" ''
       [ "$#" -gt 0 ] || echo "Sourcing Nix environment..."
       . ${nix}/etc/profile.d/nix.sh
 
-      export NIX_SSL_CERT_FILE=${cacert}
+      export NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
       echo "Installing flake from default template..."
       ${nixCmd} flake new ${flakeDir} --template ${config.build.flake.droid-nix}
 
       ${lib.optionalString config.build.flake.inputOverrides ''
         echo "Overriding input urls in the flake..."
-        while IFS="" read -r p || [[ -n "$p" ]]
-        do
-            if [[ $p =~ (.*)github:lassulus/droid-nix.*\"\; ]]; then
-                printf "''${BASH_REMATCH[1]}${config.build.flake.droid-nix}\";\n" "$p"
-            else
-                printf '%s\n' "$p"
-            fi
-        done <<<$(< "${flakeDir}/flake.nix") \
-                  > "${flakeDir}/flake.nix"
+        ${busybox}/bin/sed -i 's|"github:lassulus/droid-nix"|"${lib.escape [ "\\" "&" "|" ] config.build.flake.droid-nix}"|' \
+          "${flakeDir}/flake.nix"
       ''}
 
       echo "Installing first droid-nix generation..."
