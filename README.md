@@ -30,11 +30,12 @@ After that, edit `~/.config/droid-nix/droid-nix.nix` and run `droid-nix switch`.
 `droid-nix help` lists the commands: build, switch, generations, rollback and
 switch-generation.
 
+Most packages come from cache.nixos.org. `droid-nix switch` only builds a few
+small derivations. Larger builds from source on the phone can hit a limit:
 Android 12 and later kill an app's child processes beyond 32 (across all
-apps), which ends the session in the middle of larger builds ("Process
-completed (signal 9)"). Turn on "Disable child process restrictions" in the
-developer options, or `adb shell settings put global
-settings_enable_monitor_phantom_procs false`.
+apps), and the session ends with "Process completed (signal 9)". To lift it,
+turn on "Disable child process restrictions" in the developer options, or run
+`adb shell settings put global settings_enable_monitor_phantom_procs false`.
 
 There are no upgrade paths for the bootstrap: a new APK does not touch an
 existing install. If an update breaks something, uninstall and reinstall the
