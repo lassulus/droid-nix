@@ -10,6 +10,7 @@
   jdk17_headless,
   android,
   termux-app,
+  bootstrapZip, # directory with bootstrap-aarch64.zip, see ../bootstrap
 }:
 let
   # termux-app pins gradle 9.2.1 in gradle-wrapper.properties and builds with JDK 17 in CI.
@@ -57,6 +58,11 @@ stdenv.mkDerivation (finalAttrs: {
     ANDROID_HOME = android.sdk;
     ANDROID_SDK_ROOT = android.sdk;
   };
+
+  # The first start unpacks this asset (patch 0003).
+  postPatch = ''
+    install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip app/src/main/assets/bootstrap-aarch64.zip
+  '';
 
   preConfigure = ''
     export ANDROID_USER_HOME="$TMPDIR/android-user-home"

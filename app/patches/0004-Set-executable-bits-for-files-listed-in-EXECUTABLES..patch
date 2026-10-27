@@ -13,18 +13,18 @@ Based on nix-on-droid-app commit b0578421 by Zhaofeng Li.
  1 file changed, 15 insertions(+)
 
 diff --git a/app/src/main/java/com/termux/app/TermuxInstaller.java b/app/src/main/java/com/termux/app/TermuxInstaller.java
-index 7019af01..d2dde51d 100644
+index 3b6b1f6c..5e0c7a41 100644
 --- a/app/src/main/java/com/termux/app/TermuxInstaller.java
 +++ b/app/src/main/java/com/termux/app/TermuxInstaller.java
-@@ -175,6 +175,7 @@ final class TermuxInstaller {
+@@ -157,6 +157,7 @@ final class TermuxInstaller {
  
                      final byte[] buffer = new byte[8096];
                      final List<Pair<String, String>> symlinks = new ArrayList<>(50);
 +                    final List<String> executables = new ArrayList<>(128);
  
-                     try (ZipInputStream zipInput = new ZipInputStream(new URL(bootstrapUrl).openStream())) {
+                     try (ZipInputStream zipInput = new ZipInputStream(activity.getAssets().open(BOOTSTRAP_ZIP_ASSET))) {
                          ZipEntry zipEntry;
-@@ -196,6 +197,12 @@ final class TermuxInstaller {
+@@ -178,6 +179,12 @@ final class TermuxInstaller {
                                          return;
                                      }
                                  }
@@ -37,7 +37,7 @@ index 7019af01..d2dde51d 100644
                              } else {
                                  String zipEntryName = zipEntry.getName();
                                  File targetFile = new File(TERMUX_STAGING_PREFIX_DIR_PATH, zipEntryName);
-@@ -223,6 +230,14 @@ final class TermuxInstaller {
+@@ -205,6 +212,14 @@ final class TermuxInstaller {
                          }
                      }
  

@@ -34,6 +34,7 @@
         droid-nix-app = pkgs.callPackage ./app {
           inherit android;
           inherit (inputs) termux-app;
+          bootstrapZip = bootstrap.bootstrapZip;
         };
         # Directory with bootstrap-aarch64.zip, assembled on x86_64-linux.
         bootstrap-aarch64 = bootstrap.bootstrapZip;
