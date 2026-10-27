@@ -39,8 +39,8 @@ index 33c88d1d..a9fe1cd5 100644
          targetSdkVersion project.properties.targetSdkVersion.toInteger()
 -        versionCode 118
 -        versionName "0.118.0"
-+        versionCode 5
-+        versionName "0.5.0"
++        versionCode 6
++        versionName "0.6.0"
  
          if (appVersionName) versionName = appVersionName
          validateVersionName(versionName)
