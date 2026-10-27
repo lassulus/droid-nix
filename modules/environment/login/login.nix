@@ -43,7 +43,7 @@ writeScript "login" ''
   export HOME="${config.user.home}"
 
   # The session that ran droid-nix switch may still be reading login-inner.
-  if ! /system/bin/pgrep -x launcher > /dev/null && test -e ${installationDir}/usr/lib/.login-inner.new; then
+  if ! /system/bin/pgrep -x liblauncher.so > /dev/null && test -e ${installationDir}/usr/lib/.login-inner.new; then
     echo "Installing new login-inner..."
     /system/bin/mv ${installationDir}/usr/lib/.login-inner.new ${installationDir}/usr/lib/login-inner
   fi
@@ -52,6 +52,8 @@ writeScript "login" ''
   ${lib.concatMapStringsSep "\n" addBind binds}
 
   # launcher [-b host:guest]... TARGET argv0 argv1 ...
-  exec ${installationDir}/bin/launcher $BINDS \
+  # The app ships it as a native library: apps that target API 29 or later
+  # may not execve their data files, but may execve those.
+  exec "$TERMUX_APP__NATIVE_LIB_DIR/liblauncher.so" $BINDS \
     ${installationDir}/bin/sh ${installationDir}/bin/sh ${installationDir}/usr/lib/login-inner "$@"
 ''

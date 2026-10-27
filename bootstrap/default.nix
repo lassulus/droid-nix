@@ -1,9 +1,10 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
 # The aarch64 bootstrap zip, assembled on nativeSystem: a static nix and a
-# static busybox (/bin/sh) in a registered store, the launcher, CA
-# certificates and the login scripts of the initial build. Everything else
-# comes from cache.nixos.org on the first login.
+# static busybox (/bin/sh) in a registered store, CA certificates and the
+# login scripts of the initial build. Everything else comes from
+# cache.nixos.org on the first login. The launcher is built here too, but
+# the APK ships it as a native library (../app).
 { nixpkgs
 , nativeSystem  # system to assemble the bootstrap on
 , droidNixFlakeURL ? null
@@ -60,7 +61,7 @@ rec {
 
   bootstrap = pkgs.callPackage ./bootstrap.nix {
     inherit (modules) config;
-    inherit launcher initialPackageInfo;
+    inherit initialPackageInfo;
   };
 
   bootstrapZip = pkgs.callPackage ./bootstrap-zip.nix {
