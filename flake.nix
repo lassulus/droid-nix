@@ -4,11 +4,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Builds the bootstrap zip (static launcher, nix 2.20.5). Pinned like
-    # upstream nix-on-droid (head of nixos-24.05 as of 2024-07-06). Bumping it
-    # changes the launcher store path, which devices cannot build themselves.
-    nixpkgs-for-bootstrap.url = "github:NixOS/nixpkgs/49ee0e94463abada1de470c9c07bfc12b36dcf40";
-
     # Upstream termux-app; app/patches is applied on top of it.
     termux-app = {
       url = "github:termux/termux-app/8629e632fcb95da272221be327db653fb24befe9";
@@ -30,7 +25,7 @@
       };
       android = pkgs.callPackage ./pkgs/android-sdk.nix { };
       bootstrap = import ./bootstrap {
-        nixpkgs = inputs.nixpkgs-for-bootstrap;
+        inherit nixpkgs;
         nativeSystem = system;
       };
     in
