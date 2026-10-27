@@ -44,20 +44,20 @@ in
     build.activation = {
       installLogin = ''
         if ! diff /bin/login ${login} > /dev/null; then
-          $DRY_RUN_CMD mkdir $VERBOSE_ARG --parents /bin
-          $DRY_RUN_CMD cp $VERBOSE_ARG ${login} /bin/.login.tmp
-          $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /bin/.login.tmp
-          $DRY_RUN_CMD mv $VERBOSE_ARG /bin/.login.tmp /bin/login
+          mkdir --parents /bin
+          cp ${login} /bin/.login.tmp
+          chmod u+w /bin/.login.tmp
+          mv /bin/.login.tmp /bin/login
         fi
       '';
 
       installLoginInner = ''
         if (test -e /usr/lib/.login-inner.new && ! diff /usr/lib/.login-inner.new ${loginInner} > /dev/null) || \
             (! test -e /usr/lib/.login-inner.new && ! diff /usr/lib/login-inner ${loginInner} > /dev/null); then
-          $DRY_RUN_CMD mkdir $VERBOSE_ARG --parents /usr/lib
-          $DRY_RUN_CMD cp $VERBOSE_ARG ${loginInner} /usr/lib/.login-inner.tmp
-          $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /usr/lib/.login-inner.tmp
-          $DRY_RUN_CMD mv $VERBOSE_ARG /usr/lib/.login-inner.tmp /usr/lib/.login-inner.new
+          mkdir --parents /usr/lib
+          cp ${loginInner} /usr/lib/.login-inner.tmp
+          chmod u+w /usr/lib/.login-inner.tmp
+          mv /usr/lib/.login-inner.tmp /usr/lib/.login-inner.new
         fi
       '';
     };

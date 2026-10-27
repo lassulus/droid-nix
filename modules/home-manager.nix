@@ -110,7 +110,7 @@ in
       activationBefore = mkIf cfg.useUserPackages {
         setPriorityHomeManagerPath = ''
           if nix-env -q | grep '^home-manager-path$'; then
-            $DRY_RUN_CMD nix-env $VERBOSE_ARG --set-flag priority 120 home-manager-path
+            nix-env --set-flag priority 120 home-manager-path
           fi
         '';
       };

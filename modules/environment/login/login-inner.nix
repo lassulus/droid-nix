@@ -60,10 +60,10 @@ writeText "login-inner" ''
 
       echo
       echo "Congratulations! Now you have Nix installed with some default packages like bashInteractive, \
-    coreutils, cacert and, most importantly, droid-nix itself to manage local configuration, see"
-      echo "  droid-nix help"
-      echo "or the flake"
+    coreutils, cacert and, most importantly, droid-nix itself to manage local configuration. Edit the flake"
       echo "  ~/.config/droid-nix/"
+      echo "and run"
+      echo "  droid-nix switch"
       echo
     fi
   ''}
