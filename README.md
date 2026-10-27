@@ -17,12 +17,11 @@ repository URL:
 
     https://github.com/lassulus/droid-nix
 
-Each release has one signed `droid-nix-<version>.apk` and a
-`bootstrap-aarch64.zip`. You can also download the APK from the releases page.
+Each release has one signed `droid-nix-<version>.apk`. You can also download
+it from the releases page. The APK contains the bootstrap.
 
-On first start the app asks for the bootstrap URL. The default is
-`https://github.com/lassulus/droid-nix/releases/latest/download/bootstrap-aarch64.zip`.
-The app downloads and unpacks it. Then the first login:
+On first start the app unpacks the bootstrap; this needs no network. Then the
+first login:
 
 1. creates `~/.config/droid-nix` from this flake's default template,
 2. runs `nix run github:lassulus/droid-nix -- switch --flake ~/.config/droid-nix`.
@@ -31,40 +30,44 @@ After that, edit `~/.config/droid-nix/droid-nix.nix` and run `droid-nix switch`.
 `droid-nix help` lists the commands: build, switch, generations, rollback and
 switch-generation.
 
+Android 12 and later kill an app's child processes beyond 32 (across all
+apps), which ends the session in the middle of larger builds ("Process
+completed (signal 9)"). Turn on "Disable child process restrictions" in the
+developer options, or `adb shell settings put global
+settings_enable_monitor_phantom_procs false`.
+
+There are no upgrade paths for the bootstrap: a new APK does not touch an
+existing install. If an update breaks something, uninstall and reinstall the
+app.
+
 ## The bootstrap
 
 `bootstrap-aarch64.zip` is a minimal root filesystem that the app unpacks into
-`/data/data/us.lassul.droidnix/files/usr`. It contains:
+`/data/data/us.lassul.droidnix/files/usr`. It is 15 MB zipped, 35 MB
+unpacked, and contains:
 
-- a Nix store with Nix 2.20.5, bash and cacert,
+- a Nix store with a static Nix 2.34.9 and a static busybox (`/bin/sh`
+  for the first login),
 - the static `launcher` that provides `/nix` and the other bind mounts
   (see below),
+- `/etc` with only what the first switch needs: `nix.conf`, `resolv.conf`,
+  `hosts` and the CA certificates,
 - the `login` scripts that run the first-time setup described above.
 
-Zip entries carry no file modes, so `EXECUTABLES.txt` and `SYMLINKS.txt` list
-the executables and symlinks for the app to restore.
+Everything else (bash, coreutils, the user's packages) comes from
+cache.nixos.org with the first switch. Zip entries carry no file modes, so
+`EXECUTABLES.txt` and `SYMLINKS.txt` list the executables and symlinks for
+the app to restore.
 
 ```sh
 nix build .#bootstrap-aarch64   # result/bootstrap-aarch64.zip
 ```
 
-The bootstrap is built with the `nixpkgs-for-bootstrap` input, pinned to the
-same nixpkgs commit as upstream Nix-on-Droid (49ee0e94, nixos-24.05 as of
-2024-07-06). Nix, bash and cacert are the aarch64-linux packages from
-cache.nixos.org. The launcher is cross-compiled from x86_64-linux with gcc as
-a static musl binary (`pkgsCross.aarch64-multiplatform-musl.pkgsStatic`, see
-`bootstrap/launcher`). On-device generations refer to it by the store path of
-that same expression: the device only evaluates it and finds it in the store
-the bootstrap shipped. Changing the launcher or bumping
-`nixpkgs-for-bootstrap` changes that path, and devices cannot build the new
-one themselves. Copy it onto an existing install before `droid-nix switch`,
-e.g. through a file binary cache:
-
-```sh
-nix copy --to file://$PWD/cache $(nix build --print-out-paths .#launcher)
-# copy cache/ to the phone's Download folder, then in droid-nix:
-nix copy --no-check-sigs --from file:///android/sdcard/Download/cache /nix/store/<hash>-launcher-aarch64-unknown-linux-musl
-```
+The bootstrap uses the flake's `nixpkgs` input. Nix, busybox and the launcher
+are cross-compiled from x86_64-linux with gcc as static musl binaries
+(`pkgsCross.aarch64-multiplatform-musl.pkgsStatic`); cache.nixos.org has no
+static aarch64 Nix. Nothing on the device refers to these store paths after
+the first switch.
 
 ## The launcher
 
@@ -78,12 +81,28 @@ handler. A session runs under it when `/proc/self/status` shows `TracerPid: 0`
 and `Seccomp_filters: 2` (Android's and the launcher's). How it came about,
 its measurements and its limits are in `experiments/sud-loader`.
 
-Known differences from proot: no `--link2symlink` and no `--sysvipc`
-emulation. Hard links fail with EACCES, as for any app. Builds that make
-them fail, e.g. pkg-config's install when stdenv's bootstrap is built
-instead of substituted. A program that installs its own SIGSYS handler
-conflicts with the launcher's. `ps` shows `launcher` as the name and the
-launcher's command line for every process.
+Hard links, which Android denies to apps, are emulated like proot's
+`--link2symlink`: the first `ln a b` moves `a` into the link store
+`/nix/.l2s` and makes `a` and `b` symlinks to it, with the link count kept
+next to it. `stat`, `lstat`, `readlink`, `getdents` and `/proc/self/exe` see
+a regular file with that count as `st_nlink`; `rm` and `mv` over a name count
+down, and the last name removes the file. A file that keeps one name stays
+in the link store; programs that write files with link and unlink (libgit2
+in nix's tarball cache) leave such files there.
+
+Known differences from proot:
+
+- no `--sysvipc` emulation;
+- the first hard link of a file needs write access to its directory (it is
+  moved), so `nix store optimise` fails on the read-only store, as under
+  proot; linking an fd (`AT_EMPTY_PATH`, `/proc/self/fd/N`) is not
+  emulated; `/proc/self/fd/N` of a file opened through a hard link shows its
+  path in the link store; two processes linking or unlinking the same file
+  at once can miscount;
+- a program that installs its own SIGSYS handler conflicts with the
+  launcher's;
+- `ps` shows `launcher` as the name and the launcher's command line for every
+  process.
 
 The app data path (`/data/data/us.lassul.droidnix`) and the package id are
 defined once on the Nix side, in `android-app.nix`.
@@ -111,13 +130,14 @@ home-manager itself.
 
 `packages.x86_64-linux.droid-nix-app` builds an unsigned release APK from
 upstream termux-app, pinned as the `termux-app` flake input, plus the series in
-`app/patches`:
+`app/patches`. The build copies `bootstrap-aarch64.zip` into the app's assets,
+which makes the APK 18.5 MB.
 
 | patch | |
 |---|---|
 | 0001 | rebrand: package id `us.lassul.droidnix`, label `droid-nix`, version |
 | 0002 | Nix snowflake launcher icon |
-| 0003 | download the bootstrap zip from a URL instead of embedding Termux's |
+| 0003 | unpack droid-nix's bootstrap zip from the APK assets instead of Termux's |
 | 0004 | set executable bits from `EXECUTABLES.txt` |
 | 0005 | build for arm64-v8a only |
 
