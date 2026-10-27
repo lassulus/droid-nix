@@ -1,6 +1,6 @@
 # Copyright (c) 2019-2024, see AUTHORS. Licensed under MIT License, see LICENSE.
 
-{ runCommand, closureInfo, nix, bash, launcher, config, initialPackageInfo }:
+{ runCommand, closureInfo, nix, bash, config, initialPackageInfo }:
 
 let
   closure = closureInfo {
@@ -25,8 +25,6 @@ runCommand "bootstrap" { } ''
   mkdir --parents $out/nix/var/nix/{profiles,gcroots}/per-user/${config.user.userName}
 
   ln --symbolic ${initialPackageInfo.busybox}/bin/sh $out/bin/sh
-
-  install -D -m 0755 ${launcher}/bin/launcher $out/bin/launcher
 
   cp ${config.environment.files.login} $out/bin/login
   cp ${config.environment.files.loginInner} $out/usr/lib/login-inner

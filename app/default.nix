@@ -11,6 +11,7 @@
   android,
   termux-app,
   bootstrapZip, # directory with bootstrap-aarch64.zip, see ../bootstrap
+  launcher, # the static launcher, see ../bootstrap/launcher
 }:
 let
   # termux-app pins gradle 9.2.1 in gradle-wrapper.properties and builds with JDK 17 in CI.
@@ -59,9 +60,12 @@ stdenv.mkDerivation (finalAttrs: {
     ANDROID_SDK_ROOT = android.sdk;
   };
 
-  # The first start unpacks this asset (patch 0003).
+  # The first start unpacks this asset (patch 0003). The launcher is a
+  # "native library" only so that it is installed where the app may execve
+  # it (apps targeting API 29+ may not execve their data files, patch 0007).
   postPatch = ''
     install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip app/src/main/assets/bootstrap-aarch64.zip
+    install -D -m 0755 ${launcher}/bin/launcher app/src/main/jniLibs/arm64-v8a/liblauncher.so
   '';
 
   preConfigure = ''

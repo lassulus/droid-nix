@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Wed, 28 Oct 2026 01:30:00 +0100
+Subject: [PATCH 7/7] Run the login script with /system/bin/sh
+
+From targetSdkVersion 29 on, the app may not execve its data files, so
+$PREFIX/bin/login, a /system/bin/sh script, cannot be started directly
+(File.canExecute() is still true for it: only execve is denied). Run it
+with /system/bin/sh, as the kernel would for its "#!" line. The login starts the launcher, which
+the APK ships as lib/arm64-v8a/liblauncher.so; the shell gets the
+directory it is extracted to as $TERMUX_APP__NATIVE_LIB_DIR.
+---
+ .../environment/TermuxAppShellEnvironment.java     |  5 +++++
+ .../command/runner/terminal/TermuxSession.java     | 20 +++++++++++---------
+ 2 files changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/shell/command/environment/TermuxAppShellEnvironment.java b/termux-shared/src/main/java/com/termux/shared/termux/shell/command/environment/TermuxAppShellEnvironment.java
+--- a/termux-shared/src/main/java/com/termux/shared/termux/shell/command/environment/TermuxAppShellEnvironment.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/shell/command/environment/TermuxAppShellEnvironment.java
+@@ -71,6 +71,8 @@ public class TermuxAppShellEnvironment {
+     public static final String ENV_TERMUX_APP__PACKAGE_VARIANT = TERMUX_APP_ENV_PREFIX + "PACKAGE_VARIANT";
+     /** Environment variable for the Termux app files directory. */
+     public static final String ENV_TERMUX_APP__FILES_DIR = TERMUX_APP_ENV_PREFIX + "FILES_DIR";
++    /** Environment variable for the directory the app's native libraries are extracted to. */
++    public static final String ENV_TERMUX_APP__NATIVE_LIB_DIR = TERMUX_APP_ENV_PREFIX + "NATIVE_LIB_DIR";
+
+
+     /** Environment variable for the Termux app {@link TermuxAmSocketServer#getTermuxAppAMSocketServerEnabled(Context)}. */
+@@ -134,6 +136,9 @@ public class TermuxAppShellEnvironment {
+
+             String filesDirPath = currentPackageContext.getFilesDir().getAbsolutePath();
+             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__FILES_DIR, filesDirPath);
++
++            // droid-nix's login starts the launcher from there.
++            ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__NATIVE_LIB_DIR, applicationInfo.nativeLibraryDir);
+
+             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__SE_PROCESS_CONTEXT, SELinuxUtils.getContext());
+             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__SE_FILE_CONTEXT, SELinuxUtils.getFileContext(filesDirPath));
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/shell/command/runner/terminal/TermuxSession.java b/termux-shared/src/main/java/com/termux/shared/termux/shell/command/runner/terminal/TermuxSession.java
+--- a/termux-shared/src/main/java/com/termux/shared/termux/shell/command/runner/terminal/TermuxSession.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/shell/command/runner/terminal/TermuxSession.java
+@@ -93,13 +93,17 @@ public class TermuxSession {
+         boolean isLoginShell = false;
+         if (executionCommand.executable == null) {
+             if (!executionCommand.isFailsafe) {
+-                for (String shellBinary : UnixShellEnvironment.LOGIN_SHELL_BINARIES) {
+-                    File shellFile = new File(defaultBinPath, shellBinary);
+-                    if (shellFile.canExecute()) {
+-                        executionCommand.executable = shellFile.getAbsolutePath();
+-                        break;
+-                    }
+-                }
++                // droid-nix's $PREFIX/bin/login is a script for /system/bin/sh. The app
++                // may not execve its data files (targetSdkVersion 29 and later), so the
++                // system shell runs it, as the kernel would for its "#!" line.
++                File login = new File(defaultBinPath, "login");
++                if (login.isFile()) {
++                    String[] arguments = executionCommand.arguments != null ? executionCommand.arguments : new String[0];
++                    executionCommand.executable = "/system/bin/sh";
++                    executionCommand.arguments = new String[arguments.length + 1];
++                    executionCommand.arguments[0] = login.getAbsolutePath();
++                    System.arraycopy(arguments, 0, executionCommand.arguments, 1, arguments.length);
++                }
+             }
+
+             if (executionCommand.executable == null) {
+@@ -112,8 +116,6 @@ public class TermuxSession {
+                 // https://cs.android.com/android/platform/superproject/+/android-11.0.0_r3:external/mksh/src/main.c;l=41
+                 // https://cs.android.com/android/platform/superproject/+/android-11.0.0_r3:external/mksh/Android.bp;l=114
+                 executionCommand.executable = "/system/bin/sh";
+-            } else {
+-                isLoginShell = true;
+             }
+
+         }
