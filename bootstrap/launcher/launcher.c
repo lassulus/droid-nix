@@ -19,12 +19,16 @@
 // so every new image gets the handler again (the filter and NO_NEW_PRIVS
 // survive execve; the handler does not).
 //
+// Hard links, which Android denies to apps, are emulated with symlinks as
+// proot's --link2symlink does (see "hard links"; this traps getdents64 too).
+//
 // Keep it minimal: no heuristics, no program-specific behaviour, no limits
 // beyond the kernel's own. Unsupported cases print a clear error instead of
 // being papered over.
 
 #define _GNU_SOURCE
 #include <elf.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/audit.h>
@@ -52,6 +56,12 @@
 #endif
 #ifndef AT_EMPTY_PATH
 #define AT_EMPTY_PATH 0x1000
+#endif
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE 1
+#endif
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE 2
 #endif
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -472,27 +482,48 @@ static long walk(long dirfd, const char *path, int follow, char *g, char *hb)
 	return (long)gl;
 }
 
+static long l2s_name(long dirfd, const char *h, char *f);
+
+// How canon treats the final component: FOLLOW follows it; NOFOLLOW does not,
+// but a name of a hard-linked file (see "hard links") stands for the file
+// itself, as for a real hard link; NAME is the name itself (unlink, rename,
+// creating a name).
+enum { NOFOLLOW, FOLLOW, NAME };
+
 // The host path the kernel should get for (dirfd, path): *res is out (an
 // absolute host path, PATHBUF) or the original path when it can go to the
 // kernel unchanged (rel_plain). Returns 0 or -errno.
 static long canon(long dirfd, const char *path, int follow, char *out, const char **res)
 {
 	*res = path;
-	if (!path || !*path)
-		return 0;  // NULL / "": AT_EMPTY_PATH or the kernel's own error
-	if (path[0] != '/') {
-		long r = rel_plain(dirfd, path, follow, out);
-		if (r <= 0)
+	if (!path)
+		return 0;  // the kernel's EFAULT
+	if (*path && path[0] != '/') {
+		long r = rel_plain(dirfd, path, follow == FOLLOW, out);
+		if (r < 0)
 			return r;
+		if (r == 0)
+			goto done;
 	}
-	char g[PATHBUF];
-	long n = walk(dirfd, path, follow, g, out);
-	if (n < 0)
-		return n;
-	n = to_host(g, (size_t)n, out);
-	if (n < 0)
-		return n;
-	*res = out;
+	if (*path) {  // "": AT_EMPTY_PATH or the kernel's own error
+		char g[PATHBUF];
+		long n = walk(dirfd, path, follow == FOLLOW, g, out);
+		if (n < 0)
+			return n;
+		n = to_host(g, (size_t)n, out);
+		if (n < 0)
+			return n;
+		*res = out;
+	}
+done:
+	if (follow == NOFOLLOW) {
+		char f[PATHBUF];
+		long n = l2s_name(dirfd, *res, f);
+		if (n > 0) {
+			memcpy(out, f, (size_t)n + 1);
+			*res = out;
+		}
+	}
 	return 0;
 }
 
@@ -519,6 +550,205 @@ static long guest_abs(long dirfd, const char *path, char *buf, const char **res)
 	}
 	*res = buf;
 	return 0;
+}
+
+// ---- hard links: proot's link2symlink ----------------------------------
+
+// Android's SELinux policy denies link/linkat to apps, so hard links are
+// emulated as proot's --link2symlink does: the first link of a file moves it
+// into the link store (guest /nix/.l2s) as <store>/<inode>, and both names
+// become symlinks to it; <store>/<inode>.n is a symlink whose content is the
+// link count. A further link adds a name and counts up; unlink and rename
+// over a name count down, and the last one removes the file. Syscalls that do
+// not follow the final component (lstat, readlink, open O_NOFOLLOW, ...) see
+// the file itself instead of the symlink (canon's NOFOLLOW), stat reports the
+// count as st_nlink, and getdents the file's type and inode, so each name
+// looks like a hard link. As in proot, the first link needs write access to
+// the directory of the original name (it is moved), and link and unlink of
+// the same file by two processes at once can miscount.
+static char g_l2s[PATHBUF];  // host path of the link store
+static size_t g_l2slen;
+
+// Is the host path p a file in the link store ("<store>/<digits>")?
+static int l2s_file(const char *p)
+{
+	if (!g_l2slen || memcmp(p, g_l2s, g_l2slen) != 0 || p[g_l2slen] != '/' || !p[g_l2slen + 1])
+		return 0;
+	for (p += g_l2slen + 1; *p; p++)
+		if (*p < '0' || *p > '9')
+			return 0;
+	return 1;
+}
+
+// If (dirfd, h) is a name of a linked file, i.e. a symlink to a file in the
+// link store, write that file's host path to f (PATHBUF) and return its
+// length; otherwise 0. The magic links under /proc are never names.
+static long l2s_name(long dirfd, const char *h, char *f)
+{
+	if (!g_l2slen || !h || (h[0] == '/' && is_proc(h)))
+		return 0;
+	long n = SYS4(SYS_readlinkat, dirfd, h, f, PATHBUF - 1);
+	if (n <= 0)
+		return 0;
+	f[n] = 0;
+	return l2s_file(f) ? n : 0;
+}
+
+// "<f>.n", the count of the stored file f, into p (PATHBUF).
+static void l2s_countpath(const char *f, char *p)
+{
+	size_t n = zlen(f);
+	memcpy(p, f, n);
+	memcpy(p + n, ".n", 3);
+}
+
+static long l2s_count(const char *f)
+{
+	char p[PATHBUF], v[24];
+	l2s_countpath(f, p);
+	long n = SYS4(SYS_readlinkat, AT_FDCWD, p, v, sizeof v - 1);
+	if (n <= 0) {
+		out(2, "launcher: hard link store: cannot read the link count ");
+		out(2, p);
+		out(2, "\n");
+		return n < 0 ? n : -EIO;
+	}
+	long c = 0;
+	for (long i = 0; i < n; i++)
+		c = c * 10 + (v[i] - '0');
+	return c;
+}
+
+// Set the count of f to c: a new symlink renamed over the old one.
+static long l2s_setcount(const char *f, long c)
+{
+	char p[PATHBUF], t[PATHBUF], v[24];
+	l2s_countpath(f, p);
+	size_t pl = zlen(p);
+	memcpy(t, p, pl);
+	t[pl] = '.';
+	utoa((unsigned long)SYS0(SYS_gettid), t + pl + 1);
+	utoa((unsigned long)c, v);
+	long e = SYS3(SYS_symlinkat, v, AT_FDCWD, t);
+	if (e == 0)
+		e = SYS4(SYS_renameat, AT_FDCWD, t, AT_FDCWD, p);
+	if (e < 0)
+		SYS3(SYS_unlinkat, AT_FDCWD, t, 0);
+	return e;
+}
+
+// A name of the stored file f is gone: count down, remove f with the last.
+static void l2s_drop(const char *f)
+{
+	long c = l2s_count(f);
+	if (c > 1) {
+		l2s_setcount(f, c - 1);
+	} else if (c >= 0) {
+		char p[PATHBUF];
+		l2s_countpath(f, p);
+		SYS3(SYS_unlinkat, AT_FDCWD, f, 0);
+		SYS3(SYS_unlinkat, AT_FDCWD, p, 0);
+	}
+}
+
+// linkat on canonical paths: (od, op) the existing file, (nd, np) the new
+// name. Returns 0 or -errno.
+static long l2s_link(long od, const char *op, long nd, const char *np)
+{
+	struct stat st;
+	char f[PATHBUF];
+	long e = SYS4(SYS_newfstatat, od, op, &st, AT_SYMLINK_NOFOLLOW);
+	if (e < 0)
+		return e;
+	if (S_ISDIR(st.st_mode))
+		return -EPERM;
+	int first = 0;
+	if (S_ISLNK(st.st_mode)) {
+		// A name of a linked file, or a plain symlink: a link to a
+		// symlink is a copy of it, as in proot.
+		long n = SYS4(SYS_readlinkat, od, op, f, PATHBUF - 1);
+		if (n < 0)
+			return n;
+		f[n] = 0;
+		if (!l2s_file(f))
+			return SYS3(SYS_symlinkat, f, nd, np);
+	} else if (op[0] == '/' && l2s_file(op)) {
+		memcpy(f, op, zlen(op) + 1);  // AT_SYMLINK_FOLLOW reached the file
+	} else {
+		first = 1;
+		struct stat ds;
+		e = SYS3(SYS_mkdirat, AT_FDCWD, g_l2s, 0700);
+		if (e < 0 && e != -EEXIST)
+			return e;
+		e = SYS4(SYS_newfstatat, AT_FDCWD, g_l2s, &ds, 0);
+		if (e < 0)
+			return e;
+		if (ds.st_dev != st.st_dev)
+			return -EXDEV;
+		memcpy(f, g_l2s, g_l2slen);
+		f[g_l2slen] = '/';
+		utoa(st.st_ino, f + g_l2slen + 1);
+		// Inodes are unique on one filesystem, so an entry for this one
+		// is left over from a store that was changed behind our back.
+		if (SYS4(SYS_newfstatat, AT_FDCWD, f, &ds, AT_SYMLINK_NOFOLLOW) == 0) {
+			out(2, "launcher: hard link store: stale entry ");
+			out(2, f);
+			out(2, "\n");
+			return -EEXIST;
+		}
+	}
+	// The new name first: it fails as the kernel's link would (EEXIST,
+	// ENOENT, ...) before anything has changed.
+	e = SYS3(SYS_symlinkat, f, nd, np);
+	if (e < 0)
+		return e;
+	if (!first) {
+		long c = l2s_count(f);
+		e = c < 0 ? c : l2s_setcount(f, c + 1);
+		if (e < 0)
+			SYS3(SYS_unlinkat, nd, np, 0);
+		return e;
+	}
+	e = l2s_setcount(f, 2);
+	if (e == 0) {
+		e = SYS4(SYS_renameat, od, op, AT_FDCWD, f);
+		if (e == 0) {
+			e = SYS3(SYS_symlinkat, f, od, op);
+			if (e < 0)
+				SYS4(SYS_renameat, AT_FDCWD, f, od, op);
+		}
+	}
+	if (e < 0) {
+		char p[PATHBUF];
+		l2s_countpath(f, p);
+		SYS3(SYS_unlinkat, AT_FDCWD, p, 0);
+		SYS3(SYS_unlinkat, nd, np, 0);
+	}
+	return e;
+}
+
+// st_nlink of a successful stat of (dirfd, h): the count for a stored file.
+// h is "" for fstat (AT_EMPTY_PATH), whose file is the one dirfd names.
+static void l2s_nlink(long dirfd, const char *h, uint32_t *nlink)
+{
+	char p[PATHBUF];
+	if (*nlink != 1 || !g_l2slen || !h)
+		return;
+	if (!*h) {
+		char fdp[40];
+		memcpy(fdp, "/proc/self/fd/", 14);
+		utoa((unsigned long)dirfd, fdp + 14);
+		long n = SYS4(SYS_readlinkat, AT_FDCWD, fdp, p, PATHBUF - 1);
+		if (n <= 0)
+			return;
+		p[n] = 0;
+		h = p;
+	}
+	if (l2s_file(h)) {
+		long c = l2s_count(h);
+		if (c > 0)
+			*nlink = (uint32_t)c;
+	}
 }
 
 // ---- execve: checks, "#!" and the re-exec ------------------------------
@@ -779,11 +1009,34 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		FIX(0, 1, !(f & O_NOFOLLOW) && (f & (O_CREAT | O_EXCL)) != (O_CREAT | O_EXCL), b1);
 		break;
 	}
-	case SYS_newfstatat:
 	case SYS_utimensat:
 		FIX(0, 1, !(r[3] & AT_SYMLINK_NOFOLLOW), b1);
 		break;
-	case SYS_statx:
+	// The stats report a hard-linked file's link count (see "hard links").
+	case SYS_newfstatat: {
+		FIX(0, 1, !(r[3] & AT_SYMLINK_NOFOLLOW), b1);
+		long ret = SYS4(nr, r[0], r[1], r[2], r[3]);
+		if (ret == 0)
+			l2s_nlink((long)(int)r[0], (const char *)r[1], &((struct stat *)r[2])->st_nlink);
+		r[0] = (unsigned long)ret;
+		return;
+	}
+	case SYS_statx: {  // (dirfd, path, flags, mask, buf)
+		FIX(0, 1, !(r[2] & AT_SYMLINK_NOFOLLOW), b1);
+		long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], 0);
+		uint32_t mask, nlink;
+		char *sx = (char *)r[4];
+		if (ret == 0) {
+			memcpy(&mask, sx, 4);  // stx_mask, stx_nlink at 16
+			memcpy(&nlink, sx + 16, 4);
+			if (mask & 0x4 /* STATX_NLINK */) {
+				l2s_nlink((long)(int)r[0], (const char *)r[1], &nlink);
+				memcpy(sx + 16, &nlink, 4);
+			}
+		}
+		r[0] = (unsigned long)ret;
+		return;
+	}
 	case SYS_open_tree:
 	case SYS_open_tree_attr:
 	case SYS_mount_setattr:
@@ -808,9 +1061,18 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		break;
 	case SYS_mkdirat:
 	case SYS_mknodat:
-	case SYS_unlinkat:
-		FIX(0, 1, 0, b1);
+		FIX(0, 1, NAME, b1);
 		break;
+	// Removing a name of a hard-linked file counts it down.
+	case SYS_unlinkat: {
+		FIX(0, 1, NAME, b1);
+		long f = !(r[2] & AT_REMOVEDIR) && l2s_name((long)(int)r[0], (const char *)r[1], b2);
+		long ret = SYS3(nr, r[0], r[1], r[2]);
+		if (ret == 0 && f)
+			l2s_drop(b2);
+		r[0] = (unsigned long)ret;
+		return;
+	}
 	case SYS_name_to_handle_at:
 		FIX(0, 1, (r[4] & AT_SYMLINK_FOLLOW) != 0, b1);
 		break;
@@ -872,15 +1134,38 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 
 	// Two paths: (olddirfd, old, newdirfd, new, ...). Neither final
 	// component is followed, except linkat's old with AT_SYMLINK_FOLLOW.
+	// linkat is emulated (see "hard links"), except for an fd
+	// (AT_EMPTY_PATH) or a /proc magic link, which go to the kernel.
 	case SYS_linkat:
-		FIX(0, 1, (r[4] & AT_SYMLINK_FOLLOW) != 0, b1);
-		FIX(2, 3, 0, b2);
-		break;
+		FIX(0, 1, (r[4] & AT_SYMLINK_FOLLOW) ? FOLLOW : NAME, b1);
+		FIX(2, 3, NAME, b2);
+		if (!r[1] || !r[3] || (r[4] & AT_EMPTY_PATH) ||
+		    (((const char *)r[1])[0] == '/' && is_proc((const char *)r[1])))
+			break;
+		r[0] = (unsigned long)l2s_link((long)(int)r[0], (const char *)r[1], (long)(int)r[2],
+					       (const char *)r[3]);
+		return;
+	// Renaming over a name of a hard-linked file counts it down; renaming
+	// one name of a file onto another is a no-op, as for hard links.
 	case SYS_renameat:
-	case SYS_renameat2:
-		FIX(0, 1, 0, b1);
-		FIX(2, 3, 0, b2);
-		break;
+	case SYS_renameat2: {
+		FIX(0, 1, NAME, b1);
+		FIX(2, 3, NAME, b2);
+		char f[PATHBUF], o[PATHBUF];
+		long n = 0;
+		if (nr == SYS_renameat || !(r[4] & (RENAME_NOREPLACE | RENAME_EXCHANGE)))
+			n = l2s_name((long)(int)r[2], (const char *)r[3], f);
+		if (n && l2s_name((long)(int)r[0], (const char *)r[1], o) == n && memcmp(f, o, n) == 0) {
+			r[2] = r[0];
+			r[3] = r[1];
+			n = 0;
+		}
+		long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], 0);
+		if (ret == 0 && n)
+			l2s_drop(f);
+		r[0] = (unsigned long)ret;
+		return;
+	}
 	case SYS_move_mount:  // (from_dfd, from, to_dfd, to, flags)
 		FIX(0, 1, (r[4] & 0x1 /* MOVE_MOUNT_F_SYMLINKS */) != 0, b1);
 		FIX(2, 3, (r[4] & 0x10 /* MOVE_MOUNT_T_SYMLINKS */) != 0, b2);
@@ -890,12 +1175,12 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 	// (e.g. "/nix/store/..."): the handler re-translates it when the link
 	// is followed, and readlink returns it unchanged, as proot does.
 	case SYS_symlinkat:
-		FIX(1, 2, 0, b1);
+		FIX(1, 2, NAME, b1);
 		break;
 
 	case SYS_bind:
 	case SYS_connect:
-		if (fix_sockaddr(r, nr == SYS_connect, b1, b2))
+		if (fix_sockaddr(r, nr == SYS_connect ? FOLLOW : NAME, b1, b2))
 			return;
 		break;
 
@@ -1023,6 +1308,36 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		return;
 	}
 
+	// getdents64(fd, dirp, count): a name of a hard-linked file gets the
+	// file's type and inode instead of the symlink's (as lstat reports
+	// them), except in /proc. linux_dirent64: d_ino at 0, d_reclen at 16,
+	// d_type at 18, d_name at 19.
+	case SYS_getdents64: {
+		long fd = (long)(int)r[0];
+		char *d = (char *)r[1];
+		long n = SYS3(nr, fd, d, r[2]);
+		int proc = -1;
+		for (long o = 0; o < n && g_l2slen;) {
+			char *e = d + o;
+			uint16_t reclen;
+			memcpy(&reclen, e + 16, 2);
+			o += reclen;
+			struct stat st;
+			if (e[18] != DT_LNK || !l2s_name(fd, e + 19, b1) ||
+			    SYS4(SYS_newfstatat, AT_FDCWD, b1, &st, AT_SYMLINK_NOFOLLOW) < 0)
+				continue;
+			if (proc < 0)
+				proc = guest_base(fd, b2) >= 0 && is_proc(b2);
+			if (proc)
+				break;
+			e[18] = (char)IFTODT(st.st_mode);
+			uint64_t ino = st.st_ino;
+			memcpy(e, &ino, 8);
+		}
+		r[0] = (unsigned long)n;
+		return;
+	}
+
 	// clone3 cannot be supported in-process: its CLONE_CLEAR_SIGHAND (used
 	// by glibc's posix_spawn) would drop our SIGSYS handler in the child,
 	// and a clone3 with a new stack cannot be reissued from inside the
@@ -1104,8 +1419,9 @@ static void unblock_sigsys(void)
 // ---- seccomp filter ----------------------------------------------------
 
 // Every syscall on aarch64 (asm-generic table) that takes a path or a
-// dirfd+path, plus getcwd, execve/execveat, rt_sigaction/rt_sigprocmask and
-// clone3 (and ioctl, but only for the termios cmds in traced_ioctls).
+// dirfd+path, plus getcwd, execve/execveat, rt_sigaction/rt_sigprocmask,
+// clone3 and getdents64 (and ioctl, but only for the termios cmds in
+// traced_ioctls).
 // Not handled (documented in RESULTS.md): unix datagram destinations in
 // sendto/sendmsg/sendmmsg, paths inside bpf() attrs, and the removed,
 // privileged lookup_dcookie. Everything else is left untrapped.
@@ -1125,6 +1441,7 @@ static const int traced[] = {
 	SYS_mount_setattr, SYS_fchmodat2,     SYS_setxattrat,     SYS_getxattrat,
 	SYS_listxattrat,  SYS_removexattrat,  SYS_open_tree_attr, SYS_file_getattr,
 	SYS_file_setattr, SYS_rt_sigaction,   SYS_rt_sigprocmask, SYS_clone3,
+	SYS_getdents64,
 };
 #define NTRACED (int)(sizeof traced / sizeof traced[0])
 
@@ -1551,6 +1868,10 @@ int main(int argc, char **argv, char **envp)
 			init_binds(nb, (char *)(g_binds + nb));
 		g_nbinds = nb;
 	}
+	long ln = to_host("/nix/.l2s", 9, g_l2s);
+	if (ln < 0)
+		die("link store path too long");
+	g_l2slen = (size_t)ln;
 	argv += 2 * nb;
 	argc -= 2 * nb;
 	if (argc < 2)
@@ -1615,6 +1936,8 @@ int main(int argc, char **argv, char **envp)
 	static char tg[PATHBUF];
 	char hb[PATHBUF];
 	e = walk(AT_FDCWD, target, 1, tg, hb);
+	if (e >= 0 && to_host(tg, (size_t)e, hb) > 0 && l2s_file(hb))
+		e = walk(AT_FDCWD, target, 0, tg, hb);  // a hard link: its name
 	if (e < 0)
 		die_errno("cannot resolve ", target, e);
 	g_target = tg;
