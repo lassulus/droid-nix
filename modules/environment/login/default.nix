@@ -5,8 +5,6 @@
 with lib;
 
 let
-  cfg = config.environment.files;
-
   login = pkgs.callPackage ./login.nix { inherit config; };
 
   loginInner = pkgs.callPackage ./login-inner.nix {
@@ -34,15 +32,6 @@ in
         internal = true;
         description = "Login-inner script.";
       };
-
-      launcher = mkOption {
-        type = types.package;
-        # Set to bootstrap/launcher by the bootstrap and by
-        # lib.droidNixConfiguration, so that on-device generations refer to
-        # the launcher store path the bootstrap ships.
-        internal = true;
-        description = "<literal>launcher</literal> package.";
-      };
     };
 
   };
@@ -69,19 +58,6 @@ in
           $DRY_RUN_CMD cp $VERBOSE_ARG ${loginInner} /usr/lib/.login-inner.tmp
           $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /usr/lib/.login-inner.tmp
           $DRY_RUN_CMD mv $VERBOSE_ARG /usr/lib/.login-inner.tmp /usr/lib/.login-inner.new
-        fi
-      '';
-
-      # Every execve in a session re-execs /bin/launcher, and the session's
-      # seccomp filter only exempts the syscall stub of the launcher it
-      # started with. So login replaces it only when no launcher runs.
-      installLauncher = ''
-        if (test -e /bin/.launcher.new && ! diff /bin/.launcher.new ${cfg.launcher}/bin/launcher > /dev/null) || \
-            (! test -e /bin/.launcher.new && ! diff /bin/launcher ${cfg.launcher}/bin/launcher > /dev/null); then
-          $DRY_RUN_CMD mkdir $VERBOSE_ARG --parents /bin
-          $DRY_RUN_CMD cp $VERBOSE_ARG ${cfg.launcher}/bin/launcher /bin/.launcher.tmp
-          $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /bin/.launcher.tmp
-          $DRY_RUN_CMD mv $VERBOSE_ARG /bin/.launcher.tmp /bin/.launcher.new
         fi
       '';
     };

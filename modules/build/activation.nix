@@ -164,7 +164,6 @@ in
 
             ln --symbolic ${config.environment.files.login} $out/filesystem/bin/login
             ln --symbolic ${config.environment.files.loginInner} $out/filesystem/usr/lib/login-inner
-            ln --symbolic ${config.environment.files.launcher}/bin/launcher $out/filesystem/bin/launcher
 
             ln --symbolic ${config.environment.binSh} $out/filesystem/bin/sh
             ln --symbolic ${config.environment.usrBinEnv} $out/filesystem/usr/bin/env

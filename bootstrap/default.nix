@@ -33,8 +33,6 @@ let
       # Fix invoking bash after initial build.
       user.shell = "${initialPackageInfo.bash}/bin/bash";
 
-      environment.files.launcher = customPkgs.launcher;
-
       build.flake.droid-nix = urlOptionValue droidNixFlakeURL "DROID_NIX_FLAKE_URL";
     };
   };
