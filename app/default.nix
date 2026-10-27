@@ -73,6 +73,11 @@ stdenv.mkDerivation (finalAttrs: {
     "-Dfile.encoding=utf-8"
     # AGP otherwise fetches a prebuilt (non-patchelfed) aapt2 from maven
     "-Pandroid.aapt2FromMavenOverride=${android.sdk}/build-tools/${android.versions.buildTools}/aapt2"
+    # assembleRelease runs lint vital, which fetches maven.google.com's
+    # master-index/group-index and the Play SDK index. Those change with every
+    # upstream release, so their pinned hashes would break the build.
+    "-x"
+    "lintVitalRelease"
   ];
   # Keep memory use predictable on small builders.
   enableParallelBuilding = false;
