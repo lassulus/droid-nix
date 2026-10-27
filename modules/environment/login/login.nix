@@ -42,16 +42,10 @@ writeScript "login" ''
   export USER="${config.user.userName}"
   export HOME="${config.user.home}"
 
-  if ! /system/bin/pgrep -x launcher > /dev/null; then
-    if test -e ${installationDir}/bin/.launcher.new; then
-      echo "Installing new launcher..."
-      /system/bin/mv ${installationDir}/bin/.launcher.new ${installationDir}/bin/launcher
-    fi
-
-    if test -e ${installationDir}/usr/lib/.login-inner.new; then
-      echo "Installing new login-inner..."
-      /system/bin/mv ${installationDir}/usr/lib/.login-inner.new ${installationDir}/usr/lib/login-inner
-    fi
+  # The session that ran droid-nix switch may still be reading login-inner.
+  if ! /system/bin/pgrep -x launcher > /dev/null && test -e ${installationDir}/usr/lib/.login-inner.new; then
+    echo "Installing new login-inner..."
+    /system/bin/mv ${installationDir}/usr/lib/.login-inner.new ${installationDir}/usr/lib/login-inner
   fi
 
   BINDS=""

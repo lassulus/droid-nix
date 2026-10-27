@@ -42,8 +42,6 @@
         };
         # Directory with bootstrap-aarch64.zip, assembled on x86_64-linux.
         bootstrap-aarch64 = bootstrap.bootstrapZip;
-        # The aarch64 launcher the bootstrap ships, see README.
-        launcher = bootstrap.launcher;
         sign = pkgs.callPackage ./pkgs/sign.nix { inherit android; };
         default = self.packages.${system}.droid-nix-app;
       };
@@ -81,10 +79,7 @@
         else
           import ./modules {
             inherit pkgs extraSpecialArgs home-manager-path;
-            config.imports = modules ++ [
-              # The launcher the bootstrap ships; the device only evaluates it.
-              { environment.files.launcher = bootstrap.launcher; }
-            ];
+            config.imports = modules;
           };
 
       templates.default = {
