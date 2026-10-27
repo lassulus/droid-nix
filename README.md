@@ -18,7 +18,12 @@ repository URL:
     https://github.com/lassulus/droid-nix
 
 Each release has one signed `droid-nix-<version>.apk`. You can also download
-it from the releases page. The APK contains the bootstrap.
+it from the releases page. The APK contains the bootstrap and the launcher.
+
+The app targets API level 36 (Android 16). Unlike Termux, which stays at 28,
+it is not blocked by Google Play Protect as "built for an older version of
+Android". Play Protect may still offer to scan it as an app it has not seen
+before ("Install without scanning" is under "More details").
 
 On first start the app unpacks the bootstrap; this needs no network. Then the
 first login:
@@ -58,8 +63,6 @@ unpacked, and contains:
 
 - a Nix store with a static Nix 2.34.9 and a static busybox (`/bin/sh`
   for the first login),
-- the static `launcher` that provides `/nix` and the other bind mounts
-  (see below),
 - `/etc` with only what the first switch needs: `nix.conf`, `resolv.conf`,
   `hosts` and the CA certificates,
 - the `login` scripts that run the first-time setup described above.
@@ -74,7 +77,7 @@ nix build .#bootstrap-aarch64   # result/bootstrap-aarch64.zip
 ```
 
 The bootstrap uses the flake's `nixpkgs` input. Nix, busybox and the launcher
-are cross-compiled from x86_64-linux with gcc as static musl binaries
+(which the APK carries, not the bootstrap) are cross-compiled from x86_64-linux with gcc as static musl binaries
 (`pkgsCross.aarch64-multiplatform-musl.pkgsStatic`); cache.nixos.org has no
 static aarch64 Nix. Nothing on the device refers to these store paths after
 the first switch.
@@ -90,6 +93,15 @@ userspace ELF loader that starts each new program, so every execve keeps the
 handler. A session runs under it when `/proc/self/status` shows `TracerPid: 0`
 and `Seccomp_filters: 2` (Android's and the launcher's). How it came about,
 its measurements and its limits are in `experiments/sud-loader`.
+
+Apps that target API 29 or later may not execve files in their data
+directory; mmap with `PROT_EXEC` of those files is still allowed
+(`experiments/target-sdk`). The launcher never execve's a program there: it
+maps each program and its ld.so itself, and a trapped execve re-execs the
+launcher. So the APK ships the launcher as the native library
+`lib/arm64-v8a/liblauncher.so`, which Android extracts to a directory the app
+may execute from. The app passes that directory to the login as
+`$TERMUX_APP__NATIVE_LIB_DIR` and runs the login script with `/system/bin/sh`.
 
 Hard links, which Android denies to apps, are emulated like proot's
 `--link2symlink`: the first `ln a b` moves `a` into the link store
@@ -111,8 +123,8 @@ Known differences from proot:
   at once can miscount;
 - a program that installs its own SIGSYS handler conflicts with the
   launcher's;
-- `ps` shows `launcher` as the name and the launcher's command line for every
-  process.
+- `ps` shows `liblauncher.so` as the name and the launcher's command line
+  for every process.
 
 The app data path (`/data/data/us.lassul.droidnix`) and the package id are
 defined once on the Nix side, in `android-app.nix`.
@@ -140,8 +152,8 @@ home-manager itself.
 
 `packages.x86_64-linux.droid-nix-app` builds an unsigned release APK from
 upstream termux-app, pinned as the `termux-app` flake input, plus the series in
-`app/patches`. The build copies `bootstrap-aarch64.zip` into the app's assets,
-which makes the APK 18.5 MB.
+`app/patches`. The build copies `bootstrap-aarch64.zip` into the app's assets
+and the launcher into its native libraries, which makes the APK 18.5 MB.
 
 | patch | |
 |---|---|
@@ -150,6 +162,8 @@ which makes the APK 18.5 MB.
 | 0003 | unpack droid-nix's bootstrap zip from the APK assets instead of Termux's |
 | 0004 | set executable bits from `EXECUTABLES.txt` |
 | 0005 | build for arm64-v8a only |
+| 0006 | target API level 36, and what that breaks at start (receiver flags, foreground service type, PendingIntent flags) |
+| 0007 | run the login script with `/system/bin/sh`, pass `TERMUX_APP__NATIVE_LIB_DIR` |
 
 ```sh
 nix build .#droid-nix-app
