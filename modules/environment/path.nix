@@ -53,13 +53,13 @@ in
         nix profile list \
           | grep 'droid-nix-path$' \
           | cut -d ' ' -f 4 \
-          | xargs -t $DRY_RUN_CMD nix profile remove $VERBOSE_ARG
+          | xargs -t nix profile remove
 
-        $DRY_RUN_CMD $nix_previous profile install ${cfg.path}
+        $nix_previous profile install ${cfg.path}
 
         unset nix_previous
       else
-        $DRY_RUN_CMD nix-env --install ${cfg.path}
+        nix-env --install ${cfg.path}
       fi
     '';
 

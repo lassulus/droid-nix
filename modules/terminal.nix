@@ -80,25 +80,25 @@ in
         if (cfg.font != null)
         then {
           linkFont = ''
-            $DRY_RUN_CMD mkdir $VERBOSE_ARG -p "${configDir}"
+            mkdir -p "${configDir}"
             if [ -e "${fontTarget}" ] && ! [ -L "${fontTarget}" ]; then
-              $DRY_RUN_CMD mv $VERBOSE_ARG "${fontTarget}" "${fontBackup}"
-              $DRY_RUN_CMD echo "${fontTarget} has been moved to ${fontBackup}"
+              mv "${fontTarget}" "${fontBackup}"
+              echo "${fontTarget} has been moved to ${fontBackup}"
             fi
-            $DRY_RUN_CMD ln $VERBOSE_ARG -sf "${fontPath}" "${fontTarget}"
+            ln -sf "${fontPath}" "${fontTarget}"
           '';
         }
         else {
           unlinkFont = ''
             if [ -e "${fontTarget}" ] && [ -L "${fontTarget}" ]; then
-              $DRY_RUN_CMD rm $VERBOSE_ARG "${fontTarget}"
+              rm "${fontTarget}"
               if [ -e "${fontBackup}" ]; then
-                $DRY_RUN_CMD mv $VERBOSE_ARG "${fontBackup}" "${fontTarget}"
-                $DRY_RUN_CMD echo "${fontTarget} has been restored from backup"
+                mv "${fontBackup}" "${fontTarget}"
+                echo "${fontTarget} has been restored from backup"
               else
-                if $DRY_RUN_CMD rm $VERBOSE_ARG -d "${configDir}" 2>/dev/null
+                if rm -d "${configDir}" 2>/dev/null
                 then
-                  $DRY_RUN_CMD echo "removed empty ${configDir}"
+                  echo "removed empty ${configDir}"
                 fi
               fi
             fi
@@ -109,25 +109,25 @@ in
         if (cfg.colors != { })
         then {
           linkColors = ''
-            $DRY_RUN_CMD mkdir $VERBOSE_ARG -p "${configDir}"
+            mkdir -p "${configDir}"
             if [ -e "${colorsTarget}" ] && ! [ -L "${colorsTarget}" ]; then
-              $DRY_RUN_CMD mv $VERBOSE_ARG "${colorsTarget}" "${colorsBackup}"
-              $DRY_RUN_CMD echo "${colorsTarget} has been moved to ${colorsBackup}"
+              mv "${colorsTarget}" "${colorsBackup}"
+              echo "${colorsTarget} has been moved to ${colorsBackup}"
             fi
-            $DRY_RUN_CMD ln $VERBOSE_ARG -sf "${colorsPath}" "${colorsTarget}"
+            ln -sf "${colorsPath}" "${colorsTarget}"
           '';
         }
         else {
           unlinkColors = ''
             if [ -e "${colorsTarget}" ] && [ -L "${colorsTarget}" ]; then
-              $DRY_RUN_CMD rm $VERBOSE_ARG "${colorsTarget}"
+              rm "${colorsTarget}"
               if [ -e "${colorsBackup}" ]; then
-                $DRY_RUN_CMD mv $VERBOSE_ARG "${colorsBackup}" "${colorsTarget}"
-                $DRY_RUN_CMD echo "${colorsTarget} has been restored from backup"
+                mv "${colorsBackup}" "${colorsTarget}"
+                echo "${colorsTarget} has been restored from backup"
               else
-                if $DRY_RUN_CMD rm $VERBOSE_ARG -d "${configDir}" 2>/dev/null
+                if rm -d "${configDir}" 2>/dev/null
                 then
-                  $DRY_RUN_CMD echo "removed empty ${configDir}"
+                  echo "removed empty ${configDir}"
                 fi
               fi
             fi

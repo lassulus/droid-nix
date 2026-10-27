@@ -26,9 +26,18 @@ first login:
 1. creates `~/.config/droid-nix` from this flake's default template,
 2. runs `nix run github:lassulus/droid-nix -- switch --flake ~/.config/droid-nix`.
 
-After that, edit `~/.config/droid-nix/droid-nix.nix` and run `droid-nix switch`.
-`droid-nix help` lists the commands: build, switch, generations, rollback and
-switch-generation.
+After that, edit `~/.config/droid-nix/droid-nix.nix` and run `droid-nix switch`
+(build and activate) or `droid-nix build` (only build). `--flake PATH` selects
+another flake; all other arguments are passed to `nix build`, e.g.
+`droid-nix switch --show-trace`.
+
+Each switch adds a generation to the profile `/nix/var/nix/profiles/droid-nix`.
+To go back to generation N:
+
+```sh
+nix-env --profile /nix/var/nix/profiles/droid-nix --list-generations
+/nix/var/nix/profiles/droid-nix-N-link/activate
+```
 
 Most packages come from cache.nixos.org. `droid-nix switch` only builds a few
 small derivations. Larger builds from source on the phone can hit a limit:

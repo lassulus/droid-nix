@@ -42,34 +42,10 @@ let
     cd "$HOME"
 
     ${builtins.readFile ../lib-bash/color-echo.sh}
-    ${builtins.readFile ../lib-bash/activation-init.sh}
 
     ${mkActivationCmds cfg.activationBefore}
     ${mkActivationCmds cfg.activation}
     ${mkActivationCmds cfg.activationAfter}
-  '';
-
-  activationOptionDescriptionSuffix = ''
-    </para><para>
-
-    Any script should respect the <varname>DRY_RUN</varname>
-    variable, if it is set then no actual action should be taken.
-    The variable <varname>DRY_RUN_CMD</varname> is set to
-    <code>echo</code> if dry run is enabled. Thus, many cases you
-    can use the idiom <code>$DRY_RUN_CMD rm -rf /</code>.
-
-    </para><para>
-
-    Any script block should also respect the
-    <varname>VERBOSE</varname> variable, and if set print
-    information on standard out that may be useful for debugging
-    any issue that may arise. The variable
-    <varname>VERBOSE_ARG</varname> is set to
-    <option>--verbose</option> if verbose output is enabled.
-    The variable <varname>VERBOSE_ECHO</varname> is set to
-    <code>echo</code> if verbose output is enabled, otherwise
-    falling back to <code>true</code>. So it can be used like
-    <code>$VERBOSE_ECHO "any message"</code>.
   '';
 in
 
@@ -85,7 +61,7 @@ in
         type = types.attrs;
         description = ''
           Activation scripts for the droid-nix environment.
-        '' + activationOptionDescriptionSuffix;
+        '';
       };
 
       activationBefore = mkOption {
@@ -94,7 +70,7 @@ in
         description = ''
           Activation scripts for the droid-nix environment that
           need to be run first.
-        '' + activationOptionDescriptionSuffix;
+        '';
       };
 
       activationAfter = mkOption {
@@ -103,7 +79,7 @@ in
         description = ''
           Activation scripts for the droid-nix environment that
           need to be run last.
-        '' + activationOptionDescriptionSuffix;
+        '';
       };
 
       activationPackage = mkOption {
@@ -141,9 +117,9 @@ in
         generationDir="$(dirname $0)"
 
         if [[ $generationDir =~ ^${profileDirectory}-([0-9]+)-link$ ]]; then
-          $DRY_RUN_CMD nix-env --profile "${profileDirectory}" --switch-generation "''${BASH_REMATCH[1]}"
+          nix-env --profile "${profileDirectory}" --switch-generation "''${BASH_REMATCH[1]}"
         else
-          $DRY_RUN_CMD nix-env --profile "${profileDirectory}" --set "$_NOD_GENERATION_DIR"
+          nix-env --profile "${profileDirectory}" --set "$_NOD_GENERATION_DIR"
         fi
       '';
 
