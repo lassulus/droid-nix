@@ -164,6 +164,7 @@ and the launcher into its native libraries, which makes the APK 18.5 MB.
 | 0005 | build for arm64-v8a only |
 | 0006 | target API level 36, and what that breaks at start (receiver flags, foreground service type, PendingIntent flags) |
 | 0007 | run the login script with `/system/bin/sh`, pass `TERMUX_APP__NATIVE_LIB_DIR` |
+| 0008 | keep RUN_COMMAND working under target 36 (service type, PendingIntent flags, `#!/system/...` scripts), ask for the notification permission |
 
 ```sh
 nix build .#droid-nix-app
@@ -179,6 +180,28 @@ dependencies, regenerate it (needs network) with `nix run .#update-deps`.
 
 The app version (`versionName`/`versionCode`) is set in `app/patches/0001-*`.
 The release workflow refuses a tag that does not match it.
+
+### RUN_COMMAND (Tasker and other apps)
+
+Other apps run commands with Termux's
+[RUN_COMMAND intent](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent),
+with `us.lassul.droidnix` in place of `com.termux` in the action, extras and
+permission names:
+
+- in droid-nix, put `allow-external-apps=true` in
+  `~/.termux/termux.properties`, then close and reopen the app (it reads the
+  file when its window is created);
+- grant the calling app the `us.lassul.droidnix.permission.RUN_COMMAND`
+  permission (its app info, permissions, or
+  `adb shell pm grant <package> us.lassul.droidnix.permission.RUN_COMMAND`);
+- run commands through the login script, which sets up the Nix environment:
+  path `/data/data/us.lassul.droidnix/files/usr/bin/login`, arguments e.g.
+  `bash`, `-c`, `<command>`.
+
+Since the app targets API 36, Android refuses a caller in the background (no
+visible activity) unless the caller has one of Android's exemptions for
+starting foreground services, e.g. it is not battery optimized. A command in a new session opens droid-nix in front only if
+droid-nix may "Display over other apps", as in Termux.
 
 ### Updating termux-app
 
