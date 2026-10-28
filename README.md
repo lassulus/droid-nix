@@ -186,11 +186,10 @@ The release workflow refuses a tag that does not match it.
 Other apps run commands with Termux's
 [RUN_COMMAND intent](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent),
 with `us.lassul.droidnix` in place of `com.termux` in the action, extras and
-permission names:
+permission names. droid-nix allows external apps by default, the permission
+grant below is the gate (`allow-external-apps=false` in
+`~/.termux/termux.properties` turns them off):
 
-- in droid-nix, put `allow-external-apps=true` in
-  `~/.termux/termux.properties`, then close and reopen the app (it reads the
-  file when its window is created);
 - grant the calling app the `us.lassul.droidnix.permission.RUN_COMMAND`
   permission (its app info, permissions, or
   `adb shell pm grant <package> us.lassul.droidnix.permission.RUN_COMMAND`);
