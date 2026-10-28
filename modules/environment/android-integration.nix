@@ -129,16 +129,6 @@ in
       '';
     };
 
-    unsupported.enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      example = "true";
-      description = ''
-        Provide several more unsupported and untested commands.
-        For testing and for brave souls only.
-      '';
-    };
-
   };
 
   ###### implementation
@@ -153,8 +143,7 @@ in
       (ifD cfg.reload-settings.enable termux-tools.reload_settings) ++
       (ifD cfg.wake-lock.enable termux-tools.wake_lock) ++
       (ifD cfg.wake-unlock.enable termux-tools.wake_unlock) ++
-      (ifD cfg.xdg-open.enable termux-tools.xdg_open) ++
-      (ifD cfg.unsupported.enable termux-tools.out);
+      (ifD cfg.xdg-open.enable termux-tools.xdg_open);
 
     environment.loginHook = lib.mkIf cfg.wakeLock.enable ''
       ${termux-tools.wake_lock}/bin/droid-nix-wake-lock || true

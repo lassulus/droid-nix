@@ -2,19 +2,6 @@ scripts: droid-nix names in the help texts
 
 The installed names are changed in termux-tools.nix.
 
-diff --git a/scripts/termux-backup.in b/scripts/termux-backup.in
-index 99c4735..a830251 100644
---- a/scripts/termux-backup.in
-+++ b/scripts/termux-backup.in
-@@ -39,7 +39,7 @@ msg() {
- 
- show_usage() {
- 	msg
--	msg "Usage: termux-backup [options] [output file]"
-+	msg "Usage: droid-nix-backup [options] [output file]"
- 	msg
- 	msg "Script for backing up Termux installation directory, \$PREFIX."
- 	msg "It WILL NOT backup your home directory."
 diff --git a/scripts/termux-open-url.in b/scripts/termux-open-url.in
 index 093350e..688b9c6 100644
 --- a/scripts/termux-open-url.in

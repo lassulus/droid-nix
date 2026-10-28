@@ -58,7 +58,7 @@ stdenvNoCC.mkDerivation rec {
   '';
 
   outputs = [
-    "out" # all the unsupported unsorted stuff
+    "out" # empty, everything we keep is split out below
     "setup_storage" # droid-nix-setup-storage
     "open" # droid-nix-open
     "open_url" # droid-nix-open-url
@@ -88,7 +88,8 @@ stdenvNoCC.mkDerivation rec {
     rm $out/bin/su        # doesn't work because we overlay /bin
     rm $out/bin/top       # doesn't work because we overlay /system/bin
 
-    rm $out/bin/termux-change-repo            # we use Nix
+    rm $out/bin/termux-backup                 # backs up /data/data/com.termux
+    rm $out/bin/termux-change-repo         # we use Nix
     rm $out/bin/termux-fix-shebang            # we use Nix
     rm $out/bin/termux-info                   # Termux-specific. write our own?
     rm $out/bin/termux-reset                  # untested and dangerous
@@ -117,17 +118,13 @@ stdenvNoCC.mkDerivation rec {
     rm $out/bin/xdg-open
     ln -s $open/bin/droid-nix-open $xdg_open/bin/xdg-open
 
-    mv $out/bin/termux-backup $out/bin/droid-nix-backup
+    rm $out/share/examples/termux/termux.properties  # the app reads droid-nix.properties
+    rm -d $out/share/examples/termux $out/share/examples $out/share
+    rm -d $out/bin
 
-    # check that we didn't package we didn't want to
+    # check that we didn't package anything we didn't want to
     find $out | ${gnused}/bin/sed "s|^$out|.|" | sort > effective
     echo . >> expected
-    echo ./bin >> expected
-    echo ./bin/droid-nix-backup >> expected        # entirely untested
-    echo ./share >> expected
-    echo ./share/examples >> expected
-    echo ./share/examples/termux >> expected
-    echo ./share/examples/termux/termux.properties >> expected  # useful
     diff -u expected effective
   '';
 }
