@@ -204,6 +204,7 @@ and the launcher into its native libraries, which makes the APK 19.5 MB.
 | 0008 | keep RUN_COMMAND working under target 36 (service type, PendingIntent flags, `#!/system/...` scripts), ask for the notification permission |
 | 0009 | allow external apps (RUN_COMMAND) by default |
 | 0010 | build Termux:API into the app (the `termux-api` module, see below) |
+| 0011 | show the session notification once the notification permission is granted |
 
 Upstream Termux:API, pinned as the `termux-api` flake input, is copied to
 `termux-api/` in that tree with the series in `app/termux-api-patches`:

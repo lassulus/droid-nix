@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Wed, 28 Oct 2026 12:00:00 +0100
+Subject: [PATCH] Show the session notification once notifications are allowed
+
+TermuxService posts its foreground notification when the activity starts
+it, before the user answered the POST_NOTIFICATIONS request that the
+activity makes at the same time. That notification stays hidden after the
+grant, until the service posts it again (the next start of the app).
+Start the service again when the permission is granted, which posts it.
+---
+ app/src/main/java/com/termux/app/TermuxActivity.java | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/app/src/main/java/com/termux/app/TermuxActivity.java b/app/src/main/java/com/termux/app/TermuxActivity.java
+index b352d26..f66eb55 100644
+--- a/app/src/main/java/com/termux/app/TermuxActivity.java
++++ b/app/src/main/java/com/termux/app/TermuxActivity.java
+@@ -10,6 +10,7 @@ import android.content.Context;
+ import android.content.Intent;
+ import android.content.IntentFilter;
+ import android.content.ServiceConnection;
++import android.content.pm.PackageManager;
+ import android.net.Uri;
+ import android.os.Build;
+ import android.os.Bundle;
+@@ -813,6 +814,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+         if (requestCode == PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION) {
+             requestStoragePermission(true);
+         }
++
++        // The session notification was posted before the permission was
++        // granted and stays hidden until it is posted again: starting the
++        // service makes it call startForeground again.
++        for (int i = 0; i < permissions.length && i < grantResults.length; i++)
++            if (Manifest.permission.POST_NOTIFICATIONS.equals(permissions[i]) &&
++                grantResults[i] == PackageManager.PERMISSION_GRANTED)
++                startService(new Intent(this, TermuxService.class));
+     }
+ 
+ 
