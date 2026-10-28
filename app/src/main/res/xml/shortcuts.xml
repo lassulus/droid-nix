@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_session"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/new_session">
+        <intent
+            android:action="android.intent.action.RUN"
+            android:targetPackage="us.lassul.droidnix"
+            android:targetClass="us.lassul.droidnix.TerminalActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="failsafe"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/failsafe_session">
+        <intent
+            android:action="android.intent.action.RUN"
+            android:targetPackage="us.lassul.droidnix"
+            android:targetClass="us.lassul.droidnix.TerminalActivity">
+            <extra android:name="us.lassul.droidnix.app.failsafe_session" android:value="true" />
+        </intent>
+    </shortcut>
+</shortcuts>
