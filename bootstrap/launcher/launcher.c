@@ -40,6 +40,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
@@ -564,8 +565,11 @@ static long guest_abs(long dirfd, const char *path, char *buf, const char **res)
 // the file itself instead of the symlink (canon's NOFOLLOW), stat reports the
 // count as st_nlink, and getdents the file's type and inode, so each name
 // looks like a hard link. As in proot, the first link needs write access to
-// the directory of the original name (it is moved), and link and unlink of
-// the same file by two processes at once can miscount.
+// the directory of the original name (it is moved). A link, and the removal
+// of a name with its count, hold a lock (l2s_lock), and a name is only
+// created once its file and count are in place, so threads and processes
+// that link, unlink and rename over the same names at once (libgit2 renames
+// with link + unlink, or rename when the target exists) count each once.
 static char g_l2s[PATHBUF];  // host path of the link store
 static size_t g_l2slen;
 
@@ -602,15 +606,20 @@ static void l2s_countpath(const char *f, char *p)
 	memcpy(p + n, ".n", 3);
 }
 
-static long l2s_count(const char *f)
+// The count of the stored file f, or -errno. Under the lock a missing count
+// is an inconsistent store and reported; without it (stat), f was removed by
+// its last unlink after the caller found it.
+static long l2s_count(const char *f, int locked)
 {
 	char p[PATHBUF], v[24];
 	l2s_countpath(f, p);
 	long n = SYS4(SYS_readlinkat, AT_FDCWD, p, v, sizeof v - 1);
 	if (n <= 0) {
-		out(2, "launcher: hard link store: cannot read the link count ");
-		out(2, p);
-		out(2, "\n");
+		if (locked) {
+			out(2, "launcher: hard link store: cannot read the link count ");
+			out(2, p);
+			out(2, "\n");
+		}
 		return n < 0 ? n : -EIO;
 	}
 	long c = 0;
@@ -637,10 +646,33 @@ static long l2s_setcount(const char *f, long c)
 	return e;
 }
 
+// Take the lock for changing counts: an exclusive flock on the link store
+// directory (created if needed). Returns the fd that holds it, or -errno.
+// The fd is O_CLOEXEC, but a child forked by another thread meanwhile holds
+// the lock too until it execs or exits.
+static long l2s_lock(void)
+{
+	long e = SYS3(SYS_mkdirat, AT_FDCWD, g_l2s, 0700);
+	if (e < 0 && e != -EEXIST)
+		return e;
+	long fd = SYS4(SYS_openat, AT_FDCWD, g_l2s, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
+	if (fd < 0)
+		return fd;
+	do
+		e = SYS2(SYS_flock, fd, LOCK_EX);
+	while (e == -EINTR);
+	if (e < 0) {
+		SYS1(SYS_close, fd);
+		return e;
+	}
+	return fd;
+}
+
 // A name of the stored file f is gone: count down, remove f with the last.
+// Under the lock.
 static void l2s_drop(const char *f)
 {
-	long c = l2s_count(f);
+	long c = l2s_count(f, 1);
 	if (c > 1) {
 		l2s_setcount(f, c - 1);
 	} else if (c >= 0) {
@@ -651,18 +683,39 @@ static void l2s_drop(const char *f)
 	}
 }
 
-// linkat on canonical paths: (od, op) the existing file, (nd, np) the new
-// name. Returns 0 or -errno.
-static long l2s_link(long od, const char *op, long nd, const char *np)
+// unlinkat(2) on a canonical path: removing a name of a hard-linked file
+// counts it down. The name is looked up again under the lock and removed
+// with it held, so two threads that remove or replace the same name at once
+// count it down once. Returns the result.
+static long l2s_unlink(unsigned long *r)
+{
+	char f[PATHBUF];
+	long d = (long)(int)r[0];
+	const char *h = (const char *)r[1];
+	if ((r[2] & AT_REMOVEDIR) || !l2s_name(d, h, f))
+		return SYS3(SYS_unlinkat, r[0], r[1], r[2]);
+	long lk = l2s_lock();
+	if (lk < 0)
+		return lk;
+	long n = l2s_name(d, h, f);
+	long ret = SYS3(SYS_unlinkat, r[0], r[1], r[2]);
+	if (ret == 0 && n)
+		l2s_drop(f);
+	SYS1(SYS_close, lk);
+	return ret;
+}
+
+// l2s_link under the lock.
+static long l2s_link_locked(long od, const char *op, long nd, const char *np)
 {
 	struct stat st;
 	char f[PATHBUF];
+	long c;  // the count of f before the new name
 	long e = SYS4(SYS_newfstatat, od, op, &st, AT_SYMLINK_NOFOLLOW);
 	if (e < 0)
 		return e;
 	if (S_ISDIR(st.st_mode))
 		return -EPERM;
-	int first = 0;
 	if (S_ISLNK(st.st_mode)) {
 		// A name of a linked file, or a plain symlink: a link to a
 		// symlink is a copy of it, as in proot.
@@ -672,14 +725,16 @@ static long l2s_link(long od, const char *op, long nd, const char *np)
 		f[n] = 0;
 		if (!l2s_file(f))
 			return SYS3(SYS_symlinkat, f, nd, np);
+		c = l2s_count(f, 1);
 	} else if (op[0] == '/' && l2s_file(op)) {
 		memcpy(f, op, zlen(op) + 1);  // AT_SYMLINK_FOLLOW reached the file
+		c = l2s_count(f, 1);
 	} else {
-		first = 1;
+		// The first link moves the file into the store, so fail on an
+		// existing new name (EEXIST, as the kernel's link) before that.
 		struct stat ds;
-		e = SYS3(SYS_mkdirat, AT_FDCWD, g_l2s, 0700);
-		if (e < 0 && e != -EEXIST)
-			return e;
+		if (SYS4(SYS_newfstatat, nd, np, &ds, AT_SYMLINK_NOFOLLOW) == 0)
+			return -EEXIST;
 		e = SYS4(SYS_newfstatat, AT_FDCWD, g_l2s, &ds, 0);
 		if (e < 0)
 			return e;
@@ -696,35 +751,74 @@ static long l2s_link(long od, const char *op, long nd, const char *np)
 			out(2, "\n");
 			return -EEXIST;
 		}
+		// The count, the file, then its name in front of it.
+		e = l2s_setcount(f, 1);
+		if (e == 0) {
+			e = SYS4(SYS_renameat, od, op, AT_FDCWD, f);
+			if (e == 0) {
+				e = SYS3(SYS_symlinkat, f, od, op);
+				if (e < 0)
+					SYS4(SYS_renameat, AT_FDCWD, f, od, op);
+			}
+		}
+		if (e < 0) {
+			char p[PATHBUF];
+			l2s_countpath(f, p);
+			SYS3(SYS_unlinkat, AT_FDCWD, p, 0);
+			return e;
+		}
+		c = 1;
 	}
-	// The new name first: it fails as the kernel's link would (EEXIST,
-	// ENOENT, ...) before anything has changed.
-	e = SYS3(SYS_symlinkat, f, nd, np);
+	if (c < 0)
+		return c;
+	// The new name last, once it counts. If it fails, a first link leaves
+	// the file in the store with its one name, which looks the same.
+	e = l2s_setcount(f, c + 1);
 	if (e < 0)
 		return e;
-	if (!first) {
-		long c = l2s_count(f);
-		e = c < 0 ? c : l2s_setcount(f, c + 1);
-		if (e < 0)
-			SYS3(SYS_unlinkat, nd, np, 0);
-		return e;
-	}
-	e = l2s_setcount(f, 2);
-	if (e == 0) {
-		e = SYS4(SYS_renameat, od, op, AT_FDCWD, f);
-		if (e == 0) {
-			e = SYS3(SYS_symlinkat, f, od, op);
-			if (e < 0)
-				SYS4(SYS_renameat, AT_FDCWD, f, od, op);
-		}
-	}
-	if (e < 0) {
-		char p[PATHBUF];
-		l2s_countpath(f, p);
-		SYS3(SYS_unlinkat, AT_FDCWD, p, 0);
-		SYS3(SYS_unlinkat, nd, np, 0);
-	}
+	e = SYS3(SYS_symlinkat, f, nd, np);
+	if (e < 0)
+		l2s_setcount(f, c);
 	return e;
+}
+
+// linkat on canonical paths: (od, op) the existing file, (nd, np) the new
+// name. Returns 0 or -errno.
+static long l2s_link(long od, const char *op, long nd, const char *np)
+{
+	long lk = l2s_lock();
+	if (lk < 0)
+		return lk;
+	long e = l2s_link_locked(od, op, nd, np);
+	SYS1(SYS_close, lk);
+	return e;
+}
+
+// renameat(2) on canonical paths: renaming over a name of a hard-linked file
+// counts it down, under the lock as in l2s_unlink; renaming one name of a
+// file onto another is a no-op, as for hard links. Returns the result.
+static long l2s_rename(unsigned long *r, long nr)
+{
+	char f[PATHBUF], o[PATHBUF];
+	long nd = (long)(int)r[2];
+	const char *np = (const char *)r[3];
+	if ((nr == SYS_renameat2 && (r[4] & (RENAME_NOREPLACE | RENAME_EXCHANGE))) ||
+	    !l2s_name(nd, np, f))
+		return SYS6(nr, r[0], r[1], r[2], r[3], r[4], 0);
+	long lk = l2s_lock();
+	if (lk < 0)
+		return lk;
+	long n = l2s_name(nd, np, f);
+	if (n && l2s_name((long)(int)r[0], (const char *)r[1], o) == n && memcmp(f, o, n) == 0) {
+		r[2] = r[0];
+		r[3] = r[1];
+		n = 0;
+	}
+	long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], 0);
+	if (ret == 0 && n)
+		l2s_drop(f);
+	SYS1(SYS_close, lk);
+	return ret;
 }
 
 // st_nlink of a successful stat of (dirfd, h): the count for a stored file.
@@ -745,7 +839,7 @@ static void l2s_nlink(long dirfd, const char *h, uint32_t *nlink)
 		h = p;
 	}
 	if (l2s_file(h)) {
-		long c = l2s_count(h);
+		long c = l2s_count(h, 0);
 		if (c > 0)
 			*nlink = (uint32_t)c;
 	}
@@ -1064,15 +1158,10 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		FIX(0, 1, NAME, b1);
 		break;
 	// Removing a name of a hard-linked file counts it down.
-	case SYS_unlinkat: {
+	case SYS_unlinkat:
 		FIX(0, 1, NAME, b1);
-		long f = !(r[2] & AT_REMOVEDIR) && l2s_name((long)(int)r[0], (const char *)r[1], b2);
-		long ret = SYS3(nr, r[0], r[1], r[2]);
-		if (ret == 0 && f)
-			l2s_drop(b2);
-		r[0] = (unsigned long)ret;
+		r[0] = (unsigned long)l2s_unlink(r);
 		return;
-	}
 	case SYS_name_to_handle_at:
 		FIX(0, 1, (r[4] & AT_SYMLINK_FOLLOW) != 0, b1);
 		break;
@@ -1131,27 +1220,13 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		r[0] = (unsigned long)l2s_link((long)(int)r[0], (const char *)r[1], (long)(int)r[2],
 					       (const char *)r[3]);
 		return;
-	// Renaming over a name of a hard-linked file counts it down; renaming
-	// one name of a file onto another is a no-op, as for hard links.
+	// See l2s_rename.
 	case SYS_renameat:
-	case SYS_renameat2: {
+	case SYS_renameat2:
 		FIX(0, 1, NAME, b1);
 		FIX(2, 3, NAME, b2);
-		char f[PATHBUF], o[PATHBUF];
-		long n = 0;
-		if (nr == SYS_renameat || !(r[4] & (RENAME_NOREPLACE | RENAME_EXCHANGE)))
-			n = l2s_name((long)(int)r[2], (const char *)r[3], f);
-		if (n && l2s_name((long)(int)r[0], (const char *)r[1], o) == n && memcmp(f, o, n) == 0) {
-			r[2] = r[0];
-			r[3] = r[1];
-			n = 0;
-		}
-		long ret = SYS6(nr, r[0], r[1], r[2], r[3], r[4], 0);
-		if (ret == 0 && n)
-			l2s_drop(f);
-		r[0] = (unsigned long)ret;
+		r[0] = (unsigned long)l2s_rename(r, nr);
 		return;
-	}
 	case SYS_move_mount:  // (from_dfd, from, to_dfd, to, flags)
 		FIX(0, 1, (r[4] & 0x1 /* MOVE_MOUNT_F_SYMLINKS */) != 0, b1);
 		FIX(2, 3, (r[4] & 0x10 /* MOVE_MOUNT_T_SYMLINKS */) != 0, b2);
