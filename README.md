@@ -205,6 +205,7 @@ and the launcher into its native libraries, which makes the APK 19.5 MB.
 | 0009 | allow external apps (RUN_COMMAND) by default |
 | 0010 | build Termux:API into the app (the `termux-api` module, see below) |
 | 0011 | show the session notification once the notification permission is granted |
+| 0012 | `am startservice` (`termux-wake-lock`) without "Display over other apps" |
 
 Upstream Termux:API, pinned as the `termux-api` flake input, is copied to
 `termux-api/` in that tree with the series in `app/termux-api-patches`:
