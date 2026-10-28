@@ -16,7 +16,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 
 /**
- * termux-open and xdg-open (pkgs/android-integration/termux-tools.nix): opens
+ * droid-nix-open and xdg-open (pkgs/android-integration/termux-tools.nix): opens
  * a file or URL (the intent's data) in another app, with ACTION_VIEW or
  * ACTION_SEND, the extras "chooser" and "content-type". Files are shared as
  * content://us.lassul.droidnix.files/PATH with a read grant.
@@ -36,7 +36,7 @@ public final class OpenReceiver extends BroadcastReceiver {
             else open.setData(data);
         } else {
             if (!file.isFile()) {
-                Log.e("droid-nix", "termux-open: no such file: " + file);
+                Log.e("droid-nix", "droid-nix-open: no such file: " + file);
                 return;
             }
             String type = intent.getStringExtra("content-type");
@@ -51,7 +51,7 @@ public final class OpenReceiver extends BroadcastReceiver {
         try {
             context.startActivity(open);
         } catch (RuntimeException e) {
-            Log.e("droid-nix", "termux-open: " + data, e);
+            Log.e("droid-nix", "droid-nix-open: " + data, e);
         }
     }
 
@@ -62,7 +62,7 @@ public final class OpenReceiver extends BroadcastReceiver {
         return type != null ? type : "application/octet-stream";
     }
 
-    /** The files that termux-open shares: read only, and only through the grants it gives. */
+    /** The files that droid-nix-open shares: read only, and only through the grants it gives. */
     public static final class FilesProvider extends android.content.ContentProvider {
 
         static final String AUTHORITY = "us.lassul.droidnix.files";

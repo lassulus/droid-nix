@@ -44,7 +44,7 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
 
-    <!-- Not granted to anyone: the termux-share provider is only reached through its grants. -->
+    <!-- Not granted to anyone: the droid-nix-share provider is only reached through its grants. -->
     <permission
         android:name="us.lassul.droidnix.sharedfiles.READ_WRITE"
         android:protectionLevel="signature" />

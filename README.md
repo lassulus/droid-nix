@@ -18,7 +18,7 @@ and only supports aarch64 (arm64-v8a) devices.
   configuration, `droid-nix switch`, phone storage, going back
 - [Installing software](docs/packages.md): packages, `nix run`, searching
 - [Running an SSH server](docs/ssh.md)
-- [Termux:API](docs/termux-api.md): notifications, clipboard, location, ...
+- [Android APIs](docs/api.md): notifications, clipboard, location, ...
 - [home-manager, git and an editor](docs/home-manager.md)
 - [RUN_COMMAND](#run_command-tasker-and-other-apps): running commands from
   other apps
@@ -162,30 +162,50 @@ The module options match Nix-on-Droid's: `environment.packages`, `environment.et
 (no channels) and has no `system.stateVersion`. It does not pull in
 home-manager itself.
 
+The commands and `android-integration` options carry droid-nix names instead
+of Termux's: each `termux-NAME` command of termux-tools, termux-am and
+termux-api-package is installed as `droid-nix-NAME`, and its option is
+`android-integration.NAME.enable` (Nix-on-Droid's
+`android-integration.termux-NAME.enable`):
+
+| option | commands |
+|---|---|
+| `am` | `am`, `droid-nix-am`, `droid-nix-am-socket` |
+| `api` | `droid-nix-notification`, `droid-nix-battery-status`, ... (all of termux-api-package) |
+| `open` | `droid-nix-open` |
+| `open-url` | `droid-nix-open-url` |
+| `setup-storage` | `droid-nix-setup-storage` |
+| `reload-settings` | `droid-nix-reload-settings` |
+| `wake-lock`, `wake-unlock` | `droid-nix-wake-lock`, `droid-nix-wake-unlock` |
+| `xdg-open` | `xdg-open` (runs `droid-nix-open`) |
+| `unsupported` | `droid-nix-backup` (Termux's, backs up `/data/data/com.termux/files/usr`) |
+
+`android-integration.wakeLock.enable` acquires the wake lock at every login.
+
 ### Termux:API
 
 The app carries Termux:API, there is no separate app to install. The
 commands come with
 
 ```nix
-android-integration.termux-api.enable = true;
+android-integration.api.enable = true;
 ```
 
 which installs all of
 [termux-api-package](https://github.com/termux/termux-api-package)'s
-commands (`pkgs/android-integration/termux-api.nix`):
+commands as `droid-nix-*` (`pkgs/android-integration/termux-api.nix`):
 
 ```sh
-termux-notification -t hello -c "from droid-nix"
-termux-battery-status
-echo hi | termux-clipboard-set; termux-clipboard-get
-termux-location -p network
+droid-nix-notification -t hello -c "from droid-nix"
+droid-nix-battery-status
+echo hi | droid-nix-clipboard-set; droid-nix-clipboard-get
+droid-nix-location -p network
 ```
 
 A command that needs a runtime permission (location, camera, microphone,
 contacts, SMS, call log, phone) asks for it the first time; run it again
 after granting. droid-nix's own terminal is in the foreground when it sends a
-request, so `termux-location` does not need "Allow all the time".
+request, so `droid-nix-location` does not need "Allow all the time".
 
 ## The app
 
@@ -201,8 +221,8 @@ request, so `termux-location` does not need "Allow all the time".
 | `TerminalService` | the sessions as a foreground service, the notification, the wake lock, running commands |
 | `Installer` | unpacks the bootstrap asset; `~/storage` |
 | `Shell` | the environment, the login, `#!` scripts |
-| `AmServer` | termux-am's socket server (`files/am.sock`) |
-| `OpenReceiver` | termux-open, xdg-open |
+| `AmServer` | droid-nix-am's socket server (`files/am.sock`) |
+| `OpenReceiver` | droid-nix-open, xdg-open |
 | `HomeDocumentsProvider` | the home directory in Android's Files app and file picker |
 | `RunCommandService`, `BackgroundCommand` | RUN_COMMAND, commands without a terminal |
 
@@ -223,7 +243,7 @@ upstream call fails at compile time and shows what to add there.
 | 0001 | the receiver class name (the package is not com.termux.api); no log level from Termux:API's preferences |
 | 0002 | target API level 36: plain text toasts, mutable reply PendingIntent, notification actions and job scripts through `$PREFIX/bin/login`, no background location check |
 
-The CLI (`termux-api` helper) runs `am broadcast` through termux-am to
+The CLI (`libexec/droid-nix-api` helper) runs `am broadcast` through droid-nix-am to
 `us.lassul.droidnix/com.termux.api.TermuxApiReceiver`, which is not exported:
 only the app itself (the am socket in its process) can call it. These
 permissions are for Termux:API; the runtime ones are only granted when a
@@ -239,7 +259,7 @@ command asks for them:
   `SET_WALLPAPER`, `WRITE_SETTINGS` (brightness, granted in the system
   settings);
 - `us.lassul.droidnix.sharedfiles.READ_WRITE` (signature, guards
-  `termux-share`'s content provider).
+  `droid-nix-share`'s content provider).
 
 ```sh
 nix build .#droid-nix-app
@@ -270,7 +290,7 @@ The release workflow refuses a tag that does not match it.
 `disable-hardware-keyboard-shortcuts` and
 `shortcut.{create,next,previous,rename}-session`. `terminal.colors` and
 `terminal.font` link `colors.properties` and `font.ttf` next to it.
-`termux-reload-settings` applies changes to the running app.
+`droid-nix-reload-settings` applies changes to the running app.
 
 ### RUN_COMMAND (Tasker and other apps)
 
@@ -333,7 +353,7 @@ Losing or rotating the key means users have to uninstall and reinstall.
 ## Roadmap
 
 1. Done: Termux:API, built into the app, and its commands
-   (`android-integration.termux-api.enable`).
+   (`android-integration.api.enable`).
 2. Audit the packages Termux users rely on against termux-packages and fill the
    gaps.
 3. Port termux-desktop (Termux:X11 based desktop) as Nix packages/modules.
