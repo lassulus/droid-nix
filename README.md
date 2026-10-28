@@ -2,7 +2,7 @@
 
 droid-nix is a terminal app for Android that runs Nix. The app is
 [Termux](https://github.com/termux/termux-app) with a small patch series on
-top. The userland is a Nix bootstrap and a declarative on-device configuration,
+top, with [Termux:API](https://github.com/termux/termux-api) built in. The userland is a Nix bootstrap and a declarative on-device configuration,
 both derived from [Nix-on-Droid](https://github.com/nix-community/nix-on-droid).
 
 droid-nix is a separate app with package id `us.lassul.droidnix` and its own
@@ -148,12 +148,37 @@ The module options match Nix-on-Droid's: `environment.packages`, `environment.et
 (no channels) and has no `system.stateVersion`. It does not pull in
 home-manager itself.
 
+### Termux:API
+
+The app carries Termux:API, there is no separate app to install. The
+commands come with
+
+```nix
+android-integration.termux-api.enable = true;
+```
+
+which installs all of
+[termux-api-package](https://github.com/termux/termux-api-package)'s
+commands (`pkgs/android-integration/termux-api.nix`):
+
+```sh
+termux-notification -t hello -c "from droid-nix"
+termux-battery-status
+echo hi | termux-clipboard-set; termux-clipboard-get
+termux-location -p network
+```
+
+A command that needs a runtime permission (location, camera, microphone,
+contacts, SMS, call log, phone) asks for it the first time; run it again
+after granting. droid-nix's own terminal is in the foreground when it sends a
+request, so `termux-location` does not need "Allow all the time".
+
 ## The app
 
 `packages.x86_64-linux.droid-nix-app` builds an unsigned release APK from
 upstream termux-app, pinned as the `termux-app` flake input, plus the series in
 `app/patches`. The build copies `bootstrap-aarch64.zip` into the app's assets
-and the launcher into its native libraries, which makes the APK 18.5 MB.
+and the launcher into its native libraries, which makes the APK 19.5 MB.
 
 | patch | |
 |---|---|
@@ -165,6 +190,34 @@ and the launcher into its native libraries, which makes the APK 18.5 MB.
 | 0006 | target API level 36, and what that breaks at start (receiver flags, foreground service type, PendingIntent flags) |
 | 0007 | run the login script with `/system/bin/sh`, pass `TERMUX_APP__NATIVE_LIB_DIR` |
 | 0008 | keep RUN_COMMAND working under target 36 (service type, PendingIntent flags, `#!/system/...` scripts), ask for the notification permission |
+| 0009 | allow external apps (RUN_COMMAND) by default |
+| 0010 | build Termux:API into the app (the `termux-api` module, see below) |
+
+Upstream Termux:API, pinned as the `termux-api` flake input, is copied to
+`termux-api/` in that tree with the series in `app/termux-api-patches`:
+
+| patch | |
+|---|---|
+| 0001 | build as a library module of the app: no application id, sharedUserId, launcher entry or application class; the receiver class name |
+| 0002 | target API level 36: plain text toasts, mutable reply PendingIntent, notification actions and job scripts through `$PREFIX/bin/login`, no background location check, `<queries>` for TTS and speech recognition |
+
+The CLI (`termux-api` helper) runs `am broadcast` through termux-am to
+`us.lassul.droidnix/com.termux.api.TermuxApiReceiver`, which is not exported:
+only the app itself (the am socket in its process) can call it. Termux:API's
+manifest adds these permissions to the app; the runtime ones are only granted
+when a command asks for them:
+
+- location: `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
+  `ACCESS_BACKGROUND_LOCATION`;
+- `CAMERA`, `RECORD_AUDIO`, `BODY_SENSORS`, `USE_BIOMETRIC` (and
+  `USE_FINGERPRINT` from androidx.biometric);
+- `READ_CONTACTS`, `READ_CALL_LOG`, `READ_SMS`, `SEND_SMS`, `READ_PHONE_STATE`,
+  `CALL_PHONE`;
+- `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, `NFC`, `TRANSMIT_IR`,
+  `SET_WALLPAPER`, `WRITE_SETTINGS` (brightness, granted in the system
+  settings);
+- `us.lassul.droidnix.sharedfiles.READ_WRITE` (signature, guards
+  `termux-share`'s content provider).
 
 ```sh
 nix build .#droid-nix-app
@@ -216,7 +269,9 @@ git format-patch --zero-commit --no-signature -o /path/to/droid-nix/app/patches 
 Then set the new rev in the `termux-app` input in `flake.nix`, run
 `nix flake update termux-app` and `nix run .#update-deps`, and rebuild. To change
 a patch, commit or `git commit --fixup` on that checkout and export the series
-again the same way.
+again the same way. Termux:API works the same way with
+https://github.com/termux/termux-api, `app/termux-api-patches` and the
+`termux-api` input.
 
 ## Signing
 
@@ -234,16 +289,16 @@ It decodes the `SIGN_KEYSTORE_B64` secret (base64 PKCS12) into a temporary
 file and signs with `SIGN_KEYSTORE_PASSWORD` and `SIGN_KEY_ALIAS`. On tags it
 publishes the release.
 
-Future plugins (Termux:API for droid-nix) must be signed with the **same key**.
-They share a Linux user via `android:sharedUserId="us.lassul.droidnix"`, and
-Android only allows that between packages with the same signing certificate.
-Losing or rotating the key means users have to uninstall and reinstall.
+Termux:API is part of the APK. Separate plugin apps that share droid-nix's
+Linux user (`android:sharedUserId="us.lassul.droidnix"`) would have to be
+signed with the **same key**: Android only allows that between packages with
+the same signing certificate. Losing or rotating the key means users have to
+uninstall and reinstall.
 
 ## Roadmap
 
-1. Termux:API for droid-nix (`us.lassul.droidnix.api`, same sharedUserId) and
-   the `termux-api` CLI (`termux-notification` etc.) as a Nix package, for
-   notifications and other Android APIs.
+1. Done: Termux:API, built into the app, and its commands
+   (`android-integration.termux-api.enable`).
 2. Audit the packages Termux users rely on against termux-packages and fill the
    gaps.
 3. Port termux-desktop (Termux:X11 based desktop) as Nix packages/modules.
