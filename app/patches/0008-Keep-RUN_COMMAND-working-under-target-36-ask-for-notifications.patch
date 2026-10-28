@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Wed, 28 Oct 2026 12:00:00 +0100
+Subject: [PATCH 8/8] Keep RUN_COMMAND working under target 36, ask for
+ notifications
+
+RunCommandService (the RUN_COMMAND intent from Tasker and other apps)
+crashed under target 36:
+- it calls startForeground and so needs a foreground service type (34):
+  specialUse, like TermuxService;
+- the plugin command error notification's PendingIntents must be
+  mutable or immutable (31).
+
+Callers run commands through droid-nix's $PREFIX/bin/login (a
+/system/bin/sh script, see the previous patch), which the app may not
+execve: run scripts whose "#!" names a /system interpreter with it.
+
+Notifications need the POST_NOTIFICATIONS runtime permission (33), the
+activity asks for it when it is created.
+---
+ app/src/main/AndroidManifest.xml                                   | 5 +++++
+ app/src/main/java/com/termux/app/TermuxActivity.java               | 7 +++++++
+ .../java/com/termux/shared/termux/plugins/TermuxPluginUtils.java   | 4 ++--
+ .../main/java/com/termux/shared/termux/shell/TermuxShellUtils.java | 5 +++++
+ 4 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 18147cd..c6ac4c1 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -28,6 +28,7 @@
+     <uses-permission android:name="android.permission.VIBRATE" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
++    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+     <uses-permission android:name="android.permission.READ_LOGS" />
+@@ -206,7 +207,11 @@
+         <service
+             android:name=".app.RunCommandService"
+             android:exported="true"
++            android:foregroundServiceType="specialUse"
+             android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND">
++            <property
++                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
++                android:value="Passes commands from other apps (RUN_COMMAND) to the terminal service" />
+             <intent-filter>
+                 <action android:name="${TERMUX_PACKAGE_NAME}.RUN_COMMAND" />
+             </intent-filter>
+diff --git a/app/src/main/java/com/termux/app/TermuxActivity.java b/app/src/main/java/com/termux/app/TermuxActivity.java
+index e72dc0e..b352d26 100644
+--- a/app/src/main/java/com/termux/app/TermuxActivity.java
++++ b/app/src/main/java/com/termux/app/TermuxActivity.java
+@@ -1,5 +1,6 @@
+ package com.termux.app;
+ 
++import android.Manifest;
+ import android.annotation.SuppressLint;
+ import android.app.AlertDialog;
+ import android.content.ActivityNotFoundException;
+@@ -278,6 +279,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
+         // Send the {@link TermuxConstants#BROADCAST_TERMUX_OPENED} broadcast to notify apps that Termux
+         // app has been opened.
+         TermuxUtils.sendTermuxOpenedBroadcast(this);
++
++        // Notifications (sessions, plugin command errors) need a runtime
++        // permission since Android 13. The system stops asking once the
++        // user denied it twice.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && savedInstanceState == null)
++            PermissionUtils.requestPermission(this, Manifest.permission.POST_NOTIFICATIONS, 0);
+     }
+ 
+     @Override
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/plugins/TermuxPluginUtils.java b/termux-shared/src/main/java/com/termux/shared/termux/plugins/TermuxPluginUtils.java
+index cb37ddc..f202d5f 100644
+--- a/termux-shared/src/main/java/com/termux/shared/termux/plugins/TermuxPluginUtils.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/plugins/TermuxPluginUtils.java
+@@ -380,11 +380,11 @@ public class TermuxPluginUtils {
+         // Must ensure result code for PendingIntents and id for notification are unique otherwise will override previous
+         int nextNotificationId = TermuxNotificationUtils.getNextNotificationId(termuxPackageContext);
+ 
+-        PendingIntent contentIntent = PendingIntent.getActivity(termuxPackageContext, nextNotificationId, result.contentIntent, PendingIntent.FLAG_UPDATE_CURRENT);
++        PendingIntent contentIntent = PendingIntent.getActivity(termuxPackageContext, nextNotificationId, result.contentIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+ 
+         PendingIntent deleteIntent = null;
+         if (result.deleteIntent != null)
+-            deleteIntent = PendingIntent.getBroadcast(termuxPackageContext, nextNotificationId, result.deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT);
++            deleteIntent = PendingIntent.getBroadcast(termuxPackageContext, nextNotificationId, result.deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+ 
+         // Setup the notification channel if not already set up
+         setupPluginCommandErrorsNotificationChannel(termuxPackageContext);
+diff --git a/termux-shared/src/main/java/com/termux/shared/termux/shell/TermuxShellUtils.java b/termux-shared/src/main/java/com/termux/shared/termux/shell/TermuxShellUtils.java
+index de56a29..466ad06 100644
+--- a/termux-shared/src/main/java/com/termux/shared/termux/shell/TermuxShellUtils.java
++++ b/termux-shared/src/main/java/com/termux/shared/termux/shell/TermuxShellUtils.java
+@@ -58,6 +58,11 @@ public class TermuxShellUtils {
+                                         String[] parts = shebangExecutable.split("/");
+                                         String binary = parts[parts.length - 1];
+                                         interpreter = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/" + binary;
++                                    } else if (shebangExecutable.startsWith("/system/")) {
++                                        // The app may not execve its data files (targetSdkVersion 29
++                                        // and later), so run scripts like droid-nix's $PREFIX/bin/login
++                                        // with their system interpreter, as the kernel would.
++                                        interpreter = shebangExecutable;
+                                     }
+                                     break;
+                                 }
