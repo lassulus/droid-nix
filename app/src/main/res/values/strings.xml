@@ -13,6 +13,10 @@
     <string name="failsafe">failsafe</string>
     <string name="installing">Installing the bootstrap…</string>
     <string name="install_failed">Installing the bootstrap failed</string>
+    <string name="run_command">Running a command from another app</string>
+    <string name="run_command_not_allowed">allow-external-apps is false in ~/.droid-nix/droid-nix.properties</string>
+    <string name="run_command_permission_label">Run commands in droid-nix</string>
+    <string name="run_command_permission_description">execute arbitrary commands in droid-nix</string>
     <string name="keyboard">Keyboard</string>
     <string name="new_session">New session</string>
     <string name="failsafe_session">Failsafe session</string>

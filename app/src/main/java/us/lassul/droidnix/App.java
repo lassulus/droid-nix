@@ -1,6 +1,8 @@
 package us.lassul.droidnix;
 
 import android.app.Application;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 
 import com.termux.api.util.ResultReturner;
 
@@ -27,6 +29,8 @@ public final class App extends Application {
             android.uncaughtException(thread, e);
         });
 
+        getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(
+            TerminalService.CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW));
         AmServer.start(this);
         // Termux:API sends its results with this context.
         ResultReturner.setContext(this);
