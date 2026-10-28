@@ -13,6 +13,7 @@ import android.util.Log;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -79,8 +80,14 @@ public final class TerminalService extends Service {
     /** A new session with the login, or the failsafe shell: Android's /system/bin/sh. */
     TerminalSession addSession(boolean failsafe) {
         String[] command = failsafe ? new String[]{"/system/bin/sh"} : Shell.login(this);
+        Integer transcriptRows;
+        try {
+            transcriptRows = new Props(this).getInteger("terminal-transcript-rows");
+        } catch (IOException e) {
+            transcriptRows = null;
+        }
         TerminalSession session = new TerminalSession(command[0], Shell.home(this).getPath(), command,
-            Shell.environment(this, failsafe), null, client());
+            Shell.environment(this, failsafe), transcriptRows, client());
         if (failsafe) session.mSessionName = getString(R.string.failsafe);
         sessions.add(session);
         updateNotification();

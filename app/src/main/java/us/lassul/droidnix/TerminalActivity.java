@@ -3,10 +3,13 @@ package us.lassul.droidnix;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.graphics.Paint;
@@ -14,6 +17,7 @@ import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.ContextMenu;
 import android.view.Gravity;
@@ -40,6 +44,8 @@ import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TextStyle;
 import com.termux.view.TerminalView;
 
+import org.json.JSONException;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -57,17 +63,28 @@ import java.util.regex.Pattern;
 public final class TerminalActivity extends Activity implements ServiceConnection {
 
     static final String EXTRA_FAILSAFE = "us.lassul.droidnix.app.failsafe_session";
+    /** From termux-reload-settings: reload droid-nix.properties, the colors and the font. */
+    static final String ACTION_RELOAD = "us.lassul.droidnix.app.reload_style";
 
-    private static final Pattern URL = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*://\\S+");
+    static final Pattern URL = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*://\\S+");
 
     TerminalView terminalView;
     DrawerLayout drawer;
+    ExtraKeys extraKeys;
+    Props props = new Props();
     final TerminalClient client = new TerminalClient(this);
     TerminalService service;
     private ArrayAdapter<TerminalSession> sessionList;
     private ListView sessionListView;
     private SharedPreferences preferences;
     private int fontSize;
+
+    private final BroadcastReceiver reloadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            reload();
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,6 +94,12 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         terminalView = findViewById(R.id.terminal);
         terminalView.setTerminalViewClient(client);
         registerForContextMenu(terminalView);
+        extraKeys = new ExtraKeys(this);
+        ((ViewGroup) findViewById(R.id.content)).addView(extraKeys, ViewGroup.LayoutParams.MATCH_PARENT, 0);
+        loadProps();
+        if (props.getBoolean("hide-soft-keyboard-on-startup", false))
+            getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
         // Edge to edge: keep the terminal clear of the system bars, cutouts and the keyboard.
         View content = findViewById(R.id.content);
@@ -100,6 +123,11 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
             toggleKeyboard();
             drawer.closeDrawers();
         });
+        findViewById(R.id.toggle_keyboard).setOnLongClickListener(v -> {
+            toggleExtraKeys();
+            drawer.closeDrawers();
+            return true;
+        });
         findViewById(R.id.new_session).setOnClickListener(v -> newSession(false));
         findViewById(R.id.new_session).setOnLongClickListener(v -> {
             newSession(true);
@@ -108,6 +136,8 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
 
         // Notifications (the sessions, Termux:API) need a runtime permission.
         if (savedInstanceState == null) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 0);
+
+        registerReceiver(reloadReceiver, new IntentFilter(ACTION_RELOAD), RECEIVER_NOT_EXPORTED);
 
         Intent intent = new Intent(this, TerminalService.class);
         startService(intent);
@@ -144,11 +174,12 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
             return true;
         });
 
-        reloadStyle();
+        reload();
         if (!handleIntent(getIntent())) {
             if (service.sessions.isEmpty()) newSession(false);
             else showSession(service.current != null ? service.current : service.sessions.get(0));
         }
+        if (!props.getBoolean("hide-soft-keyboard-on-startup", false)) showKeyboard();
     }
 
     @Override
@@ -172,8 +203,21 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        terminalView.setTerminalCursorBlinkerState(true, true);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        terminalView.setTerminalCursorBlinkerState(false, true);
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
+        unregisterReceiver(reloadReceiver);
         if (service != null) service.setActivity(null);
         unbindService(this);
     }
@@ -258,11 +302,28 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
     }
 
     void toggleKeyboard() {
+        // enable/disable: the keyboard stays away, also on a tap, until toggled again.
+        if (props.is("soft-keyboard-toggle-behaviour", "enable/disable")) {
+            int flag = WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+            if ((getWindow().getAttributes().flags & flag) == 0) {
+                getWindow().addFlags(flag);
+            } else {
+                getWindow().clearFlags(flag);
+                showKeyboard();
+            }
+            return;
+        }
         WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(terminalView);
         if (insets != null && insets.isVisible(WindowInsetsCompat.Type.ime()))
             WindowCompat.getInsetsController(getWindow(), terminalView).hide(WindowInsetsCompat.Type.ime());
         else
             showKeyboard();
+    }
+
+    void toggleExtraKeys() {
+        boolean show = extraKeys.getVisibility() != View.VISIBLE;
+        preferences.edit().putBoolean("extra_keys", show).apply();
+        extraKeys.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     void toggleDrawer() {
@@ -364,9 +425,42 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         }
     }
 
-    /** Loads ~/.droid-nix/colors.properties and font.ttf (modules/terminal.nix). */
-    void reloadStyle() {
-        File directory = new File(Shell.home(this), ".droid-nix");
+    private void loadProps() {
+        try {
+            props = new Props(this);
+        } catch (IOException e) {
+            props = new Props();
+            Toast.makeText(this, Props.file(this) + ": " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Loads ~/.droid-nix: droid-nix.properties, colors.properties and font.ttf
+     * (modules/terminal.nix).
+     */
+    void reload() {
+        loadProps();
+
+        try {
+            int rows = extraKeys.load(props.get("extra-keys", ExtraKeys.DEFAULT_KEYS),
+                props.get("extra-keys-style", "default"), props.getBoolean("extra-keys-text-all-caps", true));
+            float rowHeight = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 37.5f, getResources().getDisplayMetrics());
+            extraKeys.getLayoutParams().height = Math.round(rows * rowHeight * props.getFloat("terminal-toolbar-height", 1));
+            extraKeys.setVisibility(preferences.getBoolean("extra_keys", true) ? View.VISIBLE : View.GONE);
+            extraKeys.requestLayout();
+        } catch (JSONException e) {
+            Toast.makeText(this, "extra-keys: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+
+        DisplayMetrics metrics = getResources().getDisplayMetrics();
+        int horizontal = Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, props.getFloat("terminal-margin-horizontal", 3), metrics));
+        int vertical = Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, props.getFloat("terminal-margin-vertical", 0), metrics));
+        terminalView.setPadding(horizontal, vertical, horizontal, vertical);
+        Integer blinkRate = props.getInteger("terminal-cursor-blink-rate");
+        terminalView.setTerminalCursorBlinkerRate(blinkRate != null ? blinkRate : 0);
+        terminalView.setTerminalCursorBlinkerState(true, true);
+
+        File directory = Props.file(this).getParentFile();
         File colorsFile = new File(directory, "colors.properties");
         Properties colors = new Properties();
         try {
@@ -377,8 +471,11 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         } catch (IOException | IllegalArgumentException e) {
             Toast.makeText(this, colorsFile + ": " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
-        for (TerminalSession session : service.sessions)
-            if (session.getEmulator() != null) session.getEmulator().mColors.reset();
+        for (TerminalSession session : service.sessions) {
+            if (session.getEmulator() == null) continue;
+            session.getEmulator().mColors.reset();
+            session.getEmulator().setCursorStyle();
+        }
 
         File font = new File(directory, "font.ttf");
         try {
