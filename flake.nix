@@ -3,23 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    # Upstream termux-app, of which the app uses terminal-emulator and
-    # terminal-view, unpatched.
-    termux-app = {
-      url = "github:termux/termux-app/8629e632fcb95da272221be327db653fb24befe9";
-      flake = false;
-    };
-
-    # Upstream Termux:API, built into the app with app/termux-api-patches.
-    termux-api = {
-      url = "github:termux/termux-api/fc26ce17e3badf85d4df191af364fcf7798047f1";
-      flake = false;
-    };
   };
 
   outputs =
-    { self, nixpkgs, ... }@inputs:
+    { self, nixpkgs }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -31,6 +18,7 @@
         };
       };
       android = pkgs.callPackage ./pkgs/android-sdk.nix { };
+      sources = pkgs.callPackage ./app/sources.nix { };
       bootstrap = import ./bootstrap {
         inherit nixpkgs;
         nativeSystem = system;
@@ -40,7 +28,7 @@
       packages.${system} = {
         droid-nix-app = pkgs.callPackage ./app {
           inherit android;
-          inherit (inputs) termux-app termux-api;
+          inherit (sources) termux-app termux-api;
           inherit (bootstrap) bootstrapZip launcher;
         };
         # Directory with bootstrap-aarch64.zip, assembled on x86_64-linux.
@@ -66,6 +54,17 @@
           type = "app";
           program = "${self.packages.${system}.droid-nix-app.mitmCache.updateScript}";
           meta.description = "Regenerate the gradle deps.json lockfile of the app";
+        };
+        # Update app/sources.json (needs network); run from the flake root.
+        update-termux-app = {
+          type = "app";
+          program = "${sources.termux-app.updateScript}/bin/update-termux-app";
+          meta.description = "Update termux-app in app/sources.json, to REV or upstream HEAD";
+        };
+        update-termux-api = {
+          type = "app";
+          program = "${sources.termux-api.updateScript}/bin/update-termux-api";
+          meta.description = "Update termux-api in app/sources.json, to REV or upstream HEAD";
         };
       };
 
