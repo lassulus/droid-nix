@@ -1,6 +1,6 @@
 // launcher: runs droid-nix's /nix/store binaries in the app domain, in the
 // guest view of the login's binds (/nix, /etc, /tmp, ...), in-process. It
-// replaced proot (issue #1, see experiments/sud-loader for how it came about).
+// replaced proot (see issue #1 for how it came about).
 //
 //   launcher [-b host:guest]... TARGET [argv0 argv1 ...]
 //
