@@ -11,6 +11,10 @@ let
     pkgs.callPackage ../../pkgs/android-integration/termux-tools.nix {
       inherit androidApp termux-am;
     };
+  termux-api =
+    pkgs.callPackage ../../pkgs/android-integration/termux-api.nix {
+      inherit androidApp termux-am;
+    };
 in
 {
 
@@ -26,6 +30,17 @@ in
         Provide an `am` (activity manager) command.
         Is not guaranteed to be a real deal, could be of limited compatibility
         with real `am` (like `termux-am`).
+      '';
+    };
+
+    termux-api.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      example = "true";
+      description = ''
+        Provide the Termux:API commands
+        (`termux-notification`, `termux-location`, `termux-clipboard-get`, ...)
+        that use Android APIs through the droid-nix app.
       '';
     };
 
@@ -120,6 +135,7 @@ in
   config = let ifD = cond: pkg: if cond then [ pkg ] else [ ]; in {
     environment.packages =
       (ifD cfg.am.enable termux-am) ++
+      (ifD cfg.termux-api.enable termux-api) ++
       (ifD cfg.termux-setup-storage.enable termux-tools.setup_storage) ++
       (ifD cfg.termux-open.enable termux-tools.open) ++
       (ifD cfg.termux-open-url.enable termux-tools.open_url) ++
