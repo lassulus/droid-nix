@@ -5,7 +5,7 @@
 set -eu
 
 usage() {
-    echo "usage: droid-nix switch|build [--flake PATH] [nix options...]" >&2
+    echo "usage: droid-nix switch|build [--flake REF[#NAME]] [nix options...]" >&2
     exit 1
 }
 
@@ -26,9 +26,10 @@ while [[ $# -gt 0 ]]; do
         shift
     fi
 done
+[[ $flake = *#* ]] || flake+="#default"
 
 build=(@nix@/bin/nix --extra-experimental-features "nix-command flakes" build
-       "${nixArgs[@]}" --impure "$flake#droidNixConfigurations.default.activationPackage")
+       "${nixArgs[@]}" --impure "${flake%%#*}#droidNixConfigurations.${flake#*#}.activationPackage")
 
 if [[ $command = build ]]; then
     exec "${build[@]}"
