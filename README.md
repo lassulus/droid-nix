@@ -13,7 +13,7 @@ and Nix-on-Droid without interfering with either. It only supports aarch64
 ## Usage
 
 - [Getting started](docs/getting-started.md): install, first start, the
-  configuration, `droid-nix switch`, going back
+  configuration, `droid-nix switch`, phone storage, going back
 - [Installing software](docs/packages.md): packages, `nix run`, searching
 - [Running an SSH server](docs/ssh.md)
 - [Termux:API](docs/termux-api.md): notifications, clipboard, location, ...

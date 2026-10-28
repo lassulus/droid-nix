@@ -2,21 +2,17 @@
 
 ## Without home-manager
 
-Add `git` and an editor to `environment.packages` and set `EDITOR` in
-`~/.config/droid-nix/droid-nix.nix`:
-
 ```nix
   environment.packages = with pkgs; [ vim git ];
   environment.sessionVariables.EDITOR = "vim";
 ```
 
-Configure git as usual, e.g. `git config --global user.name "Jane Doe"`.
-New sessions see the new `EDITOR`.
+and configure git as usual (`git config --global user.name "Jane Doe"`).
 
 ## With home-manager
 
-droid-nix does not bring home-manager itself. Add it as an input in
-`~/.config/droid-nix/flake.nix` and pass it on:
+Add home-manager as an input in `~/.config/droid-nix/flake.nix` and pass it
+on:
 
 ```nix
 {
@@ -74,9 +70,5 @@ droid-nix does not bring home-manager itself. Add it as an input in
 }
 ```
 
-Then `droid-nix switch`. The output ends with home-manager's activation
-("Starting Home Manager activation", "Creating home file links in ...");
-the switch took 12 seconds after the inputs were fetched, including
-home-manager's manual page. `git config user.name` prints `Jane Doe`, and
-`~/.config/git/config` links to the store. "User systemd daemon not
-running. Skipping reload." is expected.
+Then run `droid-nix switch`. "User systemd daemon not running. Skipping
+reload." is expected.
