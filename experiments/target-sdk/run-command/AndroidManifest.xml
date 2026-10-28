@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="us.lassul.droidnix.runcommandtest">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+
+    <uses-permission android:name="us.lassul.droidnix.permission.RUN_COMMAND" />
+
+    <!-- Package visibility (API 30): see droid-nix's RunCommandService. -->
+    <queries>
+        <package android:name="us.lassul.droidnix" />
+    </queries>
+
+    <application android:label="RUN_COMMAND test">
+        <!-- Sends from the foreground (an activity). -->
+        <activity
+            android:name=".RunCommandTest"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+        <!-- Sends from the background (a broadcast receiver). -->
+        <receiver
+            android:name=".RunCommandTest$Trigger"
+            android:exported="true" />
+        <!-- Gets the result through the PendingIntent. -->
+        <receiver
+            android:name=".RunCommandTest$Result"
+            android:exported="false" />
+    </application>
+</manifest>
