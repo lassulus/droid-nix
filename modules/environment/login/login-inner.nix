@@ -56,8 +56,6 @@ writeText "login-inner" ''
       echo "Installing first droid-nix generation..."
       ${nixCmd} run ${config.build.flake.droid-nix} -- switch --flake ${flakeDir}
 
-      . "${config.user.home}/.nix-profile/etc/profile.d/droid-nix-session-init.sh"
-
       echo
       echo "Congratulations! Now you have Nix installed with some default packages like bashInteractive, \
     coreutils, cacert and, most importantly, droid-nix itself to manage local configuration. Edit the flake"
@@ -66,13 +64,12 @@ writeText "login-inner" ''
       echo "  droid-nix switch"
       echo
     fi
+
+    # The switch made /bin/sh and this script those of its generation.
+    exec /bin/sh /usr/lib/login-inner "$@"
   ''}
 
   . "${config.user.home}/.nix-profile/etc/profile.d/droid-nix-session-init.sh"
-
-  ${lib.optionalString config.build.initialBuild ''
-    exec /usr/bin/env bash  # otherwise it'll be a limited bash that came with Nix
-  ''}
 
   usershell="${userShell}"
   if [ "$#" -gt 0 ]; then  # if script is not called from within droid-nix app

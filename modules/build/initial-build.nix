@@ -41,6 +41,9 @@ in
       flake.inputOverrides = config.build.flake.droid-nix != defaultDroidNixFlake;
     };
 
+    # The first generation's login-inner shows it.
+    environment.motd = null;
+
     # /etc/group and /etc/passwd need to be build on target machine because
     # uid and gid need to be determined. The bootstrap only keeps what the
     # first switch needs (nix.conf, DNS, CA certificates); that switch
