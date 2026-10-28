@@ -45,9 +45,10 @@ first login:
 2. runs `nix run github:lassulus/droid-nix -- switch --flake ~/.config/droid-nix`.
 
 After that, edit `~/.config/droid-nix/droid-nix.nix` and run `droid-nix switch`
-(build and activate) or `droid-nix build` (only build). `--flake PATH` selects
-another flake; all other arguments are passed to `nix build`, e.g.
-`droid-nix switch --show-trace`.
+(build and activate) or `droid-nix build` (only build). `--flake REF#NAME`
+builds `droidNixConfigurations.NAME` of any flake ref instead (`NAME` defaults
+to `default`), e.g. `droid-nix switch --flake github:lassulus/superconfig#massulus`;
+all other arguments are passed to `nix build`, e.g. `droid-nix switch --show-trace`.
 
 Each switch adds a generation to the profile `/nix/var/nix/profiles/droid-nix`.
 To go back to generation N:
