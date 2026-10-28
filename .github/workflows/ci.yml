@@ -14,13 +14,36 @@ jobs:
     # The APK embeds the bootstrap, whose static nix and launcher are
     # cross-compiled from x86_64-linux, see bootstrap/.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # niks3 push
     steps:
       - name: Free disk space for the cross toolchain
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
       - uses: actions/checkout@v4
+      # cache.lassul.us has what earlier runs pushed, see the push step.
       - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://cache.lassul.us
+            extra-trusted-public-keys = cache.lassul.us-1:aOMEO5TU6eLvhyPi0jmgjR2sVlGjMq3rK0MeACjTcQ0=
       - name: Build unsigned APK (with the bootstrap zip)
         run: nix build .#droid-nix-app -L
+      # The build closure, also of a failed build: the static nix, the
+      # launcher, libtermux, the gradle deps and the bootstrap are in no
+      # public cache. `niks3 push` of the APK alone would push its runtime
+      # closure only. The niks3 client is the one superconfig's CI uses, from
+      # cache.lassul.us. Fork PRs get no OIDC token; a failed push (cache
+      # down) doesn't fail the job.
+      - name: Push the build closure to cache.lassul.us
+        if: >-
+          !cancelled() && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        run: |
+          nix-store -qR --include-outputs "$(nix path-info --derivation .#droid-nix-app)" |
+            grep -v '\.drv$' |
+            nix shell github:lassulus/superconfig#niks3 -c .github/niks3-push.sh --stdin
       - name: Evaluate the on-device template configuration
         run: nix build .#checks.x86_64-linux.template -L
 
