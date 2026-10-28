@@ -69,8 +69,8 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
 
     static final String EXTRA_FAILSAFE = "us.lassul.droidnix.app.failsafe_session";
     /**
-     * From termux-reload-settings: reload droid-nix.properties, the colors and
-     * the font. With the extra ACTION_RELOAD=storage, from termux-setup-storage:
+     * From droid-nix-reload-settings: reload droid-nix.properties, the colors and
+     * the font. With the extra ACTION_RELOAD=storage, from droid-nix-setup-storage:
      * ask for the storage permission and make ~/storage.
      */
     static final String ACTION_RELOAD = "us.lassul.droidnix.app.reload_style";

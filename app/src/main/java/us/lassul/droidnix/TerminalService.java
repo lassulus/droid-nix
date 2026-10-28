@@ -31,7 +31,7 @@ import java.util.Map;
 public final class TerminalService extends Service {
 
     static final String ACTION_STOP = "us.lassul.droidnix.service_stop";
-    /** termux-wake-lock and termux-wake-unlock, and the notification's button. */
+    /** droid-nix-wake-lock and droid-nix-wake-unlock, and the notification's button. */
     static final String ACTION_WAKE_LOCK = "us.lassul.droidnix.service_wake_lock";
     static final String ACTION_WAKE_UNLOCK = "us.lassul.droidnix.service_wake_unlock";
     /** Termux's service_execute (com.termux.shared.termux.TermuxConstants in termux-shared-compat). */

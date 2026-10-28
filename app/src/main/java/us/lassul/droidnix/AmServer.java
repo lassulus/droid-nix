@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The server of termux-am (pkgs/android-integration/termux-am.nix), so that
+ * The server of droid-nix-am (pkgs/android-integration/termux-am.nix), so that
  * the shells can start activities and services and send broadcasts as the
  * app: on the Unix socket files/am.sock, a client sends its arguments as
  * bash's printf %q quotes them and shuts down writing; the answer is

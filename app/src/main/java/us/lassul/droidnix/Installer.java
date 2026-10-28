@@ -110,7 +110,7 @@ final class Installer {
     }
 
     /**
-     * ~/storage (termux-setup-storage): links to the shared storage, its
+     * ~/storage (droid-nix-setup-storage): links to the shared storage, its
      * common directories, and the app's directories on other volumes
      * (external-N, media-N).
      */
