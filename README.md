@@ -178,7 +178,6 @@ termux-api-package is installed as `droid-nix-NAME`, and its option is
 | `reload-settings` | `droid-nix-reload-settings` |
 | `wake-lock`, `wake-unlock` | `droid-nix-wake-lock`, `droid-nix-wake-unlock` |
 | `xdg-open` | `xdg-open` (runs `droid-nix-open`) |
-| `unsupported` | `droid-nix-backup` (Termux's, backs up `/data/data/com.termux/files/usr`) |
 
 `android-integration.wakeLock.enable` acquires the wake lock at every login.
 
