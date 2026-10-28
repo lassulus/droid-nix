@@ -71,6 +71,8 @@ writeText "login-inner" ''
 
   . "${config.user.home}/.nix-profile/etc/profile.d/droid-nix-session-init.sh"
 
+  ${config.environment.loginHook}
+
   usershell="${userShell}"
   if [ "$#" -gt 0 ]; then  # if script is not called from within droid-nix app
     exec /usr/bin/env "$@"

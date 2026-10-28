@@ -18,6 +18,17 @@ in
 
   options = {
 
+    environment.loginHook = mkOption {
+      type = types.lines;
+      default = "";
+      internal = true;
+      description = ''
+        Shell code run at every login (a new session or RUN_COMMAND) and
+        after every switch, e.g. to start background programs: Android has
+        no service manager. It must not block or fail.
+      '';
+    };
+
     environment.files = {
       login = mkOption {
         type = types.package;
@@ -58,6 +69,10 @@ in
         ln --symbolic --force ${loginInner} /usr/lib/.login-inner.tmp
         mv /usr/lib/.login-inner.tmp /usr/lib/login-inner
       '';
+    };
+
+    build.activationAfter = mkIf (config.environment.loginHook != "") {
+      inherit (config.environment) loginHook;
     };
 
     environment.files = {

@@ -109,6 +109,17 @@ in
       '';
     };
 
+    wakeLock.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      example = "true";
+      description = ''
+        Acquire the wake lock (like `termux-wake-lock`) at every login and
+        switch, so that programs keep running with the screen off.
+        `services.sshd` turns this on by default.
+      '';
+    };
+
     xdg-open.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -144,5 +155,9 @@ in
       (ifD cfg.termux-wake-unlock.enable termux-tools.wake_unlock) ++
       (ifD cfg.xdg-open.enable termux-tools.xdg_open) ++
       (ifD cfg.unsupported.enable termux-tools.out);
+
+    environment.loginHook = lib.mkIf cfg.wakeLock.enable ''
+      ${termux-tools.wake_lock}/bin/termux-wake-lock || true
+    '';
   };
 }
