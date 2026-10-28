@@ -14,9 +14,14 @@ import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.graphics.Paint;
 import android.graphics.Typeface;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.IBinder;
+import android.provider.Settings;
+import android.system.ErrnoException;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.ContextMenu;
@@ -63,8 +68,15 @@ import java.util.regex.Pattern;
 public final class TerminalActivity extends Activity implements ServiceConnection {
 
     static final String EXTRA_FAILSAFE = "us.lassul.droidnix.app.failsafe_session";
-    /** From termux-reload-settings: reload droid-nix.properties, the colors and the font. */
+    /**
+     * From termux-reload-settings: reload droid-nix.properties, the colors and
+     * the font. With the extra ACTION_RELOAD=storage, from termux-setup-storage:
+     * ask for the storage permission and make ~/storage.
+     */
     static final String ACTION_RELOAD = "us.lassul.droidnix.app.reload_style";
+
+    private static final int REQUEST_NOTIFICATIONS = 0;
+    private static final int REQUEST_STORAGE = 1;
 
     static final Pattern URL = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*://\\S+");
 
@@ -82,7 +94,8 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
     private final BroadcastReceiver reloadReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            reload();
+            if ("storage".equals(intent.getStringExtra(ACTION_RELOAD))) requestStorage();
+            else reload();
         }
     };
 
@@ -135,7 +148,7 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         });
 
         // Notifications (the sessions, Termux:API) need a runtime permission.
-        if (savedInstanceState == null) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 0);
+        if (savedInstanceState == null) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
 
         registerReceiver(reloadReceiver, new IntentFilter(ACTION_RELOAD), RECEIVER_NOT_EXPORTED);
 
@@ -225,7 +238,38 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         // The notification posted before the grant is not shown.
-        if (service != null) service.updateNotification();
+        if (requestCode == REQUEST_NOTIFICATIONS && service != null) service.updateNotification();
+        if (requestCode == REQUEST_STORAGE && hasStorage()) setupStorage();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_STORAGE && hasStorage()) setupStorage();
+    }
+
+    private boolean hasStorage() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ? Environment.isExternalStorageManager()
+            : checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** All files access from Android 11 on, so that the shells see the shared storage as a file system. */
+    void requestStorage() {
+        if (hasStorage())
+            setupStorage();
+        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            startActivityForResult(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:" + getPackageName())), REQUEST_STORAGE);
+        else
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE);
+    }
+
+    private void setupStorage() {
+        try {
+            Installer.setupStorage(this);
+        } catch (IOException | ErrnoException e) {
+            Toast.makeText(this, "~/storage: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     @Override

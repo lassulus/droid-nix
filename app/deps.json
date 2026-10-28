@@ -302,6 +302,15 @@
    "pom": "sha256-O7RSgN8d0clrmgFySmFFZrfWDTNFP81SwsdB+ZmcOk4="
   }
  },
+ "https://jitpack.io/com": {
+  "termux#termux-am-library/v2.0.0": {
+   "module": "sha256-LOU30NnFow42mPU6JBjrPYiEFZzwRwaeZgkc1J6zARU=",
+   "pom": "sha256-Ru6RLVNd75P9qQhpISCQezTxqas+vcp3VzczmtaGjTQ="
+  },
+  "termux/termux-am-library/v2.0.0/termux-am-library-v2.0.0": {
+   "aar": "sha256-CRKKQJvU2alYB9U+F+Bwyp0cmMFpSsQpfLYZYWV6rZE="
+  }
+ },
  "https://repo.maven.apache.org/maven2": {
   "com/google/android#annotations/4.1.1.4": {
    "jar": "sha256-unNOHoTAnWFa9qCdMwNLTwRC+Hct7BIO+zdthqVlrhU=",

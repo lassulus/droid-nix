@@ -7,7 +7,11 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.graphics.drawable.Icon;
+import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.IBinder;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 
 import com.termux.terminal.TerminalSession;
@@ -24,6 +28,9 @@ import java.util.List;
 public final class TerminalService extends Service {
 
     static final String ACTION_STOP = "us.lassul.droidnix.service_stop";
+    /** termux-wake-lock and termux-wake-unlock, and the notification's button. */
+    static final String ACTION_WAKE_LOCK = "us.lassul.droidnix.service_wake_lock";
+    static final String ACTION_WAKE_UNLOCK = "us.lassul.droidnix.service_wake_unlock";
 
     private static final int NOTIFICATION_ID = 1;
     private static final String CHANNEL = "sessions";
@@ -33,6 +40,8 @@ public final class TerminalService extends Service {
     TerminalSession current;
     /** The activity while it is bound: its client gets the sessions' events. */
     private TerminalActivity activity;
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     final class Binder extends android.os.Binder {
         TerminalService service() {
@@ -49,11 +58,16 @@ public final class TerminalService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+        String action = intent != null ? intent.getAction() : null;
+        if (ACTION_STOP.equals(action)) {
             if (activity != null) activity.finish();
             for (TerminalSession session : sessions) session.finishIfRunning();
             sessions.clear();
             stopSelf();
+        } else if (ACTION_WAKE_LOCK.equals(action)) {
+            acquireWakeLock();
+        } else if (ACTION_WAKE_UNLOCK.equals(action)) {
+            releaseWakeLock();
         }
         return START_NOT_STICKY;
     }
@@ -65,7 +79,39 @@ public final class TerminalService extends Service {
 
     @Override
     public void onDestroy() {
+        releaseWakeLock();
         for (TerminalSession session : sessions) session.finishIfRunning();
+    }
+
+    /**
+     * Keeps the CPU and Wi-Fi running with the screen off. Android still stops
+     * the app in the background unless it is exempt from battery
+     * optimization, so it asks for that.
+     */
+    private void acquireWakeLock() {
+        if (wakeLock != null) return;
+        wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "droid-nix:wake-lock");
+        wakeLock.acquire();
+        wifiLock = getSystemService(WifiManager.class).createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "droid-nix:wake-lock");
+        wifiLock.acquire();
+        if (!getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName())) {
+            try {
+                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (RuntimeException e) {
+                Log.w("droid-nix", "cannot ask to ignore battery optimizations", e);
+            }
+        }
+        updateNotification();
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock == null) return;
+        wakeLock.release();
+        wakeLock = null;
+        wifiLock.release();
+        wifiLock = null;
+        updateNotification();
     }
 
     void setActivity(TerminalActivity activity) {
@@ -107,11 +153,14 @@ public final class TerminalService extends Service {
 
     private Notification notification() {
         int count = sessions.size();
+        String text = getResources().getQuantityString(R.plurals.sessions, count, count);
+        if (wakeLock != null) text += getString(R.string.wake_lock_held);
         Intent stop = new Intent(this, TerminalService.class).setAction(ACTION_STOP);
+        Intent wake = new Intent(this, TerminalService.class).setAction(wakeLock != null ? ACTION_WAKE_UNLOCK : ACTION_WAKE_LOCK);
         return new Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_foreground_nix)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(getResources().getQuantityString(R.plurals.sessions, count, count))
+            .setContentText(text)
             .setContentIntent(PendingIntent.getActivity(this, 0,
                 new Intent(this, TerminalActivity.class), PendingIntent.FLAG_IMMUTABLE))
             .setOngoing(true)
@@ -119,6 +168,10 @@ public final class TerminalService extends Service {
             .addAction(new Notification.Action.Builder(
                 Icon.createWithResource(this, android.R.drawable.ic_delete), getString(R.string.exit),
                 PendingIntent.getService(this, 0, stop, PendingIntent.FLAG_IMMUTABLE)).build())
+            .addAction(new Notification.Action.Builder(
+                Icon.createWithResource(this, android.R.drawable.ic_lock_lock),
+                getString(wakeLock != null ? R.string.release_wake_lock : R.string.acquire_wake_lock),
+                PendingIntent.getService(this, 1, wake, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)).build())
             .build();
     }
 
