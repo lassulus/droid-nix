@@ -1,14 +1,16 @@
 # droid-nix
 
-droid-nix is a terminal app for Android that runs Nix. The app is
-[Termux](https://github.com/termux/termux-app) with a small patch series on
-top, with [Termux:API](https://github.com/termux/termux-api) built in. The userland is a Nix bootstrap and a declarative on-device configuration,
-both derived from [Nix-on-Droid](https://github.com/nix-community/nix-on-droid).
+droid-nix is a terminal app for Android that runs Nix. The app is small and
+our own, built on [Termux](https://github.com/termux/termux-app)'s terminal
+emulator and view, with [Termux:API](https://github.com/termux/termux-api)
+built in. The userland is a Nix bootstrap and a declarative on-device
+configuration, both derived from
+[Nix-on-Droid](https://github.com/nix-community/nix-on-droid).
 
 droid-nix is a separate app with package id `us.lassul.droidnix` and its own
 authorities, permissions and intent actions. It can be installed next to Termux
-and Nix-on-Droid without interfering with either. It only supports aarch64
-(arm64-v8a) devices.
+and Nix-on-Droid without interfering with either. It needs Android 8 or later
+and only supports aarch64 (arm64-v8a) devices.
 
 ## Usage
 
@@ -64,7 +66,8 @@ turn on "Disable child process restrictions" in the developer options, or run
 
 There are no upgrade paths for the bootstrap: a new APK does not touch an
 existing install. If an update breaks something, uninstall and reinstall the
-app.
+app. Version 0.8.0 (the app of our own) does not install over 0.7.x, which
+had a shared user id: uninstall 0.7.x first.
 
 ## The bootstrap
 
@@ -112,7 +115,7 @@ launcher never execve's a program there: it maps each program and its ld.so
 itself, and a trapped execve re-execs the launcher. So the APK ships the launcher as the native library
 `lib/arm64-v8a/liblauncher.so`, which Android extracts to a directory the app
 may execute from. The app passes that directory to the login as
-`$TERMUX_APP__NATIVE_LIB_DIR` and runs the login script with `/system/bin/sh`.
+`$DROID_NIX_NATIVE_LIB_DIR` and runs the login script with `/system/bin/sh`.
 
 Hard links, which Android denies to apps, are emulated like proot's
 `--link2symlink`: the first `ln a b` moves `a` into the link store
@@ -187,38 +190,44 @@ request, so `termux-location` does not need "Allow all the time".
 ## The app
 
 `packages.x86_64-linux.droid-nix-app` builds an unsigned release APK from
-upstream termux-app, pinned as the `termux-app` flake input, plus the series in
-`app/patches`. The build copies `bootstrap-aarch64.zip` into the app's assets
-and the launcher into its native libraries, which makes the APK 19.5 MB.
+`app/`, a small gradle project (Java, package `us.lassul.droidnix`):
+
+| `app/src/main/java/us/lassul/droidnix/` | |
+|---|---|
+| `TerminalActivity` | the terminal, the sessions drawer, the context menu, edge to edge with the system bars and the keyboard |
+| `TerminalClient` | keys (Ctrl+Alt shortcuts, the volume keys as Ctrl and Fn), clipboard, bell |
+| `ExtraKeys` | the extra keys rows, in Termux's `extra-keys` format |
+| `Props` | `~/.droid-nix/droid-nix.properties` |
+| `TerminalService` | the sessions as a foreground service, the notification, the wake lock, running commands |
+| `Installer` | unpacks the bootstrap asset; `~/storage` |
+| `Shell` | the environment, the login, `#!` scripts |
+| `AmServer` | termux-am's socket server (`files/am.sock`) |
+| `OpenReceiver` | termux-open, xdg-open |
+| `HomeDocumentsProvider` | the home directory in Android's Files app and file picker |
+| `RunCommandService`, `BackgroundCommand` | RUN_COMMAND, commands without a terminal |
+
+Upstream code it builds, unpatched, from the `termux-app` flake input:
+`terminal-emulator` and `terminal-view` (and their `libtermux.so`, built
+with the NDK in Nix). The build copies `bootstrap-aarch64.zip` into the
+app's assets and the launcher into its native libraries, which makes the APK
+18.1 MB.
+
+Upstream Termux:API, pinned as the `termux-api` flake input, is the module
+`app/termux-api` with the patches in `app/termux-api-patches`. It compiles
+against `app/termux-shared-compat`, the part of Termux's termux-shared that
+it uses, under the same class names and with droid-nix's values; a new
+upstream call fails at compile time and shows what to add there.
 
 | patch | |
 |---|---|
-| 0001 | rebrand: package id `us.lassul.droidnix`, label `droid-nix`, version |
-| 0002 | Nix snowflake launcher icon |
-| 0003 | unpack droid-nix's bootstrap zip from the APK assets instead of Termux's |
-| 0004 | set executable bits from `EXECUTABLES.txt` |
-| 0005 | build for arm64-v8a only |
-| 0006 | target API level 36, and what that breaks at start (receiver flags, foreground service type, PendingIntent flags) |
-| 0007 | run the login script with `/system/bin/sh`, pass `TERMUX_APP__NATIVE_LIB_DIR` |
-| 0008 | keep RUN_COMMAND working under target 36 (service type, PendingIntent flags, `#!/system/...` scripts), ask for the notification permission |
-| 0009 | allow external apps (RUN_COMMAND) by default |
-| 0010 | build Termux:API into the app (the `termux-api` module, see below) |
-| 0011 | show the session notification once the notification permission is granted |
-| 0012 | `am startservice` (`termux-wake-lock`) without "Display over other apps" |
-
-Upstream Termux:API, pinned as the `termux-api` flake input, is copied to
-`termux-api/` in that tree with the series in `app/termux-api-patches`:
-
-| patch | |
-|---|---|
-| 0001 | build as a library module of the app: no application id, sharedUserId, launcher entry or application class; the receiver class name |
-| 0002 | target API level 36: plain text toasts, mutable reply PendingIntent, notification actions and job scripts through `$PREFIX/bin/login`, no background location check, `<queries>` for TTS and speech recognition |
+| 0001 | the receiver class name (the package is not com.termux.api); no log level from Termux:API's preferences |
+| 0002 | target API level 36: plain text toasts, mutable reply PendingIntent, notification actions and job scripts through `$PREFIX/bin/login`, no background location check |
 
 The CLI (`termux-api` helper) runs `am broadcast` through termux-am to
 `us.lassul.droidnix/com.termux.api.TermuxApiReceiver`, which is not exported:
-only the app itself (the am socket in its process) can call it. Termux:API's
-manifest adds these permissions to the app; the runtime ones are only granted
-when a command asks for them:
+only the app itself (the am socket in its process) can call it. These
+permissions are for Termux:API; the runtime ones are only granted when a
+command asks for them:
 
 - location: `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
   `ACCESS_BACKGROUND_LOCATION`;
@@ -244,17 +253,35 @@ The toolchain comes from nixpkgs: `androidenv` (platform 36, build-tools
 Maven dependencies are pinned in `app/deps.json`. After changing gradle
 dependencies, regenerate it (needs network) with `nix run .#update-deps`.
 
-The app version (`versionName`/`versionCode`) is set in `app/patches/0001-*`.
+The app version (`versionName`/`versionCode`) is set in `app/build.gradle`.
 The release workflow refuses a tag that does not match it.
+
+### Terminal settings
+
+`~/.droid-nix/droid-nix.properties` takes these keys of Termux's
+`termux.properties`, with the same values: `extra-keys`, `extra-keys-style`,
+`extra-keys-text-all-caps`, `allow-external-apps`, `bell-character`,
+`back-key`, `volume-keys`, `terminal-transcript-rows`,
+`terminal-cursor-style`, `terminal-cursor-blink-rate`,
+`terminal-margin-horizontal`, `terminal-margin-vertical`,
+`terminal-toolbar-height`, `hide-soft-keyboard-on-startup`,
+`soft-keyboard-toggle-behaviour`, `enforce-char-based-input`,
+`ctrl-space-workaround`, `terminal-onclick-url-open`,
+`disable-hardware-keyboard-shortcuts` and
+`shortcut.{create,next,previous,rename}-session`. `terminal.colors` and
+`terminal.font` link `colors.properties` and `font.ttf` next to it.
+`termux-reload-settings` applies changes to the running app.
 
 ### RUN_COMMAND (Tasker and other apps)
 
 Other apps run commands with Termux's
 [RUN_COMMAND intent](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent),
 with `us.lassul.droidnix` in place of `com.termux` in the action, extras and
-permission names. droid-nix allows external apps by default, the permission
+permission names, and the service class `us.lassul.droidnix.RunCommandService`.
+The result directory extras (`RUN_COMMAND_RESULT_*`) are not supported, a
+PendingIntent is. droid-nix allows external apps by default, the permission
 grant below is the gate (`allow-external-apps=false` in
-`~/.termux/termux.properties` turns them off):
+`~/.droid-nix/droid-nix.properties` turns them off):
 
 - grant the calling app the `us.lassul.droidnix.permission.RUN_COMMAND`
   permission (its app info, permissions, or
@@ -268,23 +295,22 @@ visible activity) unless the caller has one of Android's exemptions for
 starting foreground services, e.g. it is not battery optimized. A command in a new session opens droid-nix in front only if
 droid-nix may "Display over other apps", as in Termux.
 
-### Updating termux-app
+### Updating termux-app and Termux:API
+
+Set the new rev in the `termux-app` or `termux-api` input in `flake.nix`, run
+`nix flake update termux-app` (or `termux-api`) and `nix run .#update-deps`,
+and rebuild. terminal-emulator and terminal-view are used unpatched. For
+Termux:API, a compile error names what to add to `app/termux-shared-compat`,
+and the patches are kept like this:
 
 ```sh
-git clone https://github.com/termux/termux-app && cd termux-app
+git clone https://github.com/termux/termux-api && cd termux-api
 git checkout <old rev from flake.nix>
-git am /path/to/droid-nix/app/patches/*.patch
+git am /path/to/droid-nix/app/termux-api-patches/*.patch
 git rebase <new rev>               # resolve conflicts, keep the series short
-rm /path/to/droid-nix/app/patches/*.patch
-git format-patch --zero-commit --no-signature -o /path/to/droid-nix/app/patches <new rev>
+rm /path/to/droid-nix/app/termux-api-patches/*.patch
+git format-patch --zero-commit --no-signature -o /path/to/droid-nix/app/termux-api-patches <new rev>
 ```
-
-Then set the new rev in the `termux-app` input in `flake.nix`, run
-`nix flake update termux-app` and `nix run .#update-deps`, and rebuild. To change
-a patch, commit or `git commit --fixup` on that checkout and export the series
-again the same way. Termux:API works the same way with
-https://github.com/termux/termux-api, `app/termux-api-patches` and the
-`termux-api` input.
 
 ## Signing
 
@@ -302,11 +328,7 @@ It decodes the `SIGN_KEYSTORE_B64` secret (base64 PKCS12) into a temporary
 file and signs with `SIGN_KEYSTORE_PASSWORD` and `SIGN_KEY_ALIAS`. On tags it
 publishes the release.
 
-Termux:API is part of the APK. Separate plugin apps that share droid-nix's
-Linux user (`android:sharedUserId="us.lassul.droidnix"`) would have to be
-signed with the **same key**: Android only allows that between packages with
-the same signing certificate. Losing or rotating the key means users have to
-uninstall and reinstall.
+Losing or rotating the key means users have to uninstall and reinstall.
 
 ## Roadmap
 
@@ -319,4 +341,4 @@ uninstall and reinstall.
 ## License
 
 The Nix code derived from Nix-on-Droid is MIT licensed (`LICENSE`, `AUTHORS`).
-The patches to termux-app are GPLv3 like Termux. See `NOTICE`.
+The app (`app/`) is GPLv3 like Termux, whose code it builds on. See `NOTICE`.

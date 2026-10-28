@@ -54,6 +54,26 @@ for droid-nix: turn on **Allow access to manage all files** and go back.
 `~/storage` then has links such as `shared` (the whole storage),
 `downloads`, `dcim` and `pictures`.
 
+## The terminal
+
+Swipe from the left edge for the sessions (with gesture navigation, that
+swipe is Android's back gesture: add `DRAWER` to the extra keys, see below,
+or press Ctrl+Alt+→ on a keyboard):
+"New session", a long tap on it for a failsafe session (Android's
+`/system/bin/sh`, for when the Nix environment is broken), a long tap on a
+session to rename it. A long tap on the text selects it; "More" in the
+selection menu has URL selection, sharing the transcript and "Keep screen
+on". With a keyboard, Ctrl+Alt+C opens a session and Ctrl+Alt+N/P switch.
+The volume down key is Ctrl, volume up with WASD gives the arrow keys.
+
+The extra keys, the cursor and the like are set in
+`~/.droid-nix/droid-nix.properties` with Termux's `termux.properties` keys
+(see the README), the colors and font with `terminal.colors` and
+`terminal.font` in the configuration.
+
+Your home directory also shows up as "droid-nix" in Android's Files app and
+in the file picker of other apps.
+
 ## Go back to an older generation
 
 ```sh
