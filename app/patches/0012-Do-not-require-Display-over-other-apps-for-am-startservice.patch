@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Wed, 28 Oct 2026 12:00:00 +0100
+Subject: [PATCH] Do not require "Display over other apps" for am startservice
+
+The am socket server refused "am startservice" without the
+SYSTEM_ALERT_WINDOW permission, like "am start". That permission only
+lets an app start activities from the background; starting a service
+does not depend on it, and the app's own TermuxService runs in the
+foreground while there are sessions. termux-wake-lock and
+termux-wake-unlock (am startservice of TermuxService) failed without it,
+while the notification's wake lock button worked.
+---
+ .../main/java/com/termux/shared/shell/am/AmSocketServer.java | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/termux-shared/src/main/java/com/termux/shared/shell/am/AmSocketServer.java b/termux-shared/src/main/java/com/termux/shared/shell/am/AmSocketServer.java
+index e316ec0..c4fe90f 100644
+--- a/termux-shared/src/main/java/com/termux/shared/shell/am/AmSocketServer.java
++++ b/termux-shared/src/main/java/com/termux/shared/shell/am/AmSocketServer.java
+@@ -204,7 +204,8 @@ public class AmSocketServer {
+      * @param stderr The {@link StringBuilder} to set stderr in that is returned by the am command.
+      * @param checkDisplayOverAppsPermission Check if {@link Manifest.permission#SYSTEM_ALERT_WINDOW}
+      *                                       has been granted if running on Android `>= 10` and
+-     *                                       starting activity or service.
++     *                                       starting an activity. Starting a service from the
++     *                                       background does not depend on it.
+      * @return Returns the {@code error} if am command failed, otherwise {@code null}.
+      */
+     public static Error runAmCommand(@NonNull Context context,
+@@ -217,7 +218,7 @@ public class AmSocketServer {
+              PrintStream stderrPrintStream = new PrintStream(stderrByteStream)) {
+ 
+             if (checkDisplayOverAppsPermission && amCommandArray.length >= 1 &&
+-                (amCommandArray[0].equals("start") || amCommandArray[0].equals("startservice")) &&
++                amCommandArray[0].equals("start") &&
+                 !PermissionUtils.validateDisplayOverOtherAppsPermissionForPostAndroid10(context, true)) {
+                 throw new IllegalStateException(context.getString(R.string.error_display_over_other_apps_permission_not_granted,
+                     PackageUtils.getAppNameForPackage(context)));
