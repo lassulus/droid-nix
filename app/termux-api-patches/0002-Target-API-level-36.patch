@@ -7,6 +7,8 @@ The droid-nix app targets API level 36, upstream Termux:API 28.
 
 - The PendingIntent of a notification's reply button must say whether
   it is mutable (31); it is, the reply text is added to it.
+- Text toasts have no view (30), the app crashed on styling it: the
+  system draws them, without termux-toast's colors.
 - The app may not execve its data files (29), so notification actions
   and job scheduler scripts run through droid-nix's $PREFIX/bin/login,
   which the Termux service runs with its /system/bin/sh interpreter
@@ -21,7 +23,8 @@ The droid-nix app targets API level 36, upstream Termux:API 28.
  .../java/com/termux/api/apis/JobSchedulerAPI.java  |  5 ++++-
  .../main/java/com/termux/api/apis/LocationAPI.java | 14 +++-----------
  .../java/com/termux/api/apis/NotificationAPI.java  | 11 +++++++----
- 4 files changed, 25 insertions(+), 16 deletions(-)
+ .../main/java/com/termux/api/apis/ToastAPI.java    | 14 +++++++++-----
+ 5 files changed, 34 insertions(+), 21 deletions(-)
 
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
 index e797819..23a8442 100644
@@ -127,3 +130,28 @@ index bc4ca8a..8bb42ca 100644
          executionCommand.runner = ExecutionCommand.Runner.APP_SHELL.getName();
  
          // Create execution intent with the action TERMUX_SERVICE#ACTION_SERVICE_EXECUTE to be sent to the TERMUX_SERVICE
+diff --git a/app/src/main/java/com/termux/api/apis/ToastAPI.java b/app/src/main/java/com/termux/api/apis/ToastAPI.java
+index 96ea2ea..143db80 100644
+--- a/app/src/main/java/com/termux/api/apis/ToastAPI.java
++++ b/app/src/main/java/com/termux/api/apis/ToastAPI.java
+@@ -36,11 +36,15 @@ public class ToastAPI {
+                     Toast toast = Toast.makeText(context, inputString, durationExtra);
+                     View toastView = toast.getView();
+ 
+-                    Drawable background = toastView.getBackground();
+-                    background.setTint(backgroundColor);
+-
+-                    TextView textView = toastView.findViewById(android.R.id.message);
+-                    textView.setTextColor(textColor);
++                    // From targetSdkVersion 30 on, text toasts have no view: the
++                    // system draws them, without the colors.
++                    if (toastView != null) {
++                        Drawable background = toastView.getBackground();
++                        background.setTint(backgroundColor);
++
++                        TextView textView = toastView.findViewById(android.R.id.message);
++                        textView.setTextColor(textColor);
++                    }
+ 
+                     toast.setGravity(gravity, 0, 0);
+                     toast.show();
