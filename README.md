@@ -92,13 +92,13 @@ on the path syscalls, a SIGSYS handler that translates the paths, and a
 userspace ELF loader that starts each new program, so every execve keeps the
 handler. A session runs under it when `/proc/self/status` shows `TracerPid: 0`
 and `Seccomp_filters: 2` (Android's and the launcher's). How it came about,
-its measurements and its limits are in `experiments/sud-loader`.
+its measurements and its limits are in
+[issue 1](https://github.com/lassulus/droid-nix/issues/1).
 
 Apps that target API 29 or later may not execve files in their data
-directory; mmap with `PROT_EXEC` of those files is still allowed
-(`experiments/target-sdk`). The launcher never execve's a program there: it
-maps each program and its ld.so itself, and a trapped execve re-execs the
-launcher. So the APK ships the launcher as the native library
+directory; mmap with `PROT_EXEC` of those files is still allowed. The
+launcher never execve's a program there: it maps each program and its ld.so
+itself, and a trapped execve re-execs the launcher. So the APK ships the launcher as the native library
 `lib/arm64-v8a/liblauncher.so`, which Android extracts to a directory the app
 may execute from. The app passes that directory to the login as
 `$TERMUX_APP__NATIVE_LIB_DIR` and runs the login script with `/system/bin/sh`.
