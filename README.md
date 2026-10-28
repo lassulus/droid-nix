@@ -226,13 +226,14 @@ request, so `droid-nix-location` does not need "Allow all the time".
 | `HomeDocumentsProvider` | the home directory in Android's Files app and file picker |
 | `RunCommandService`, `BackgroundCommand` | RUN_COMMAND, commands without a terminal |
 
-Upstream code it builds, unpatched, from the `termux-app` flake input:
+Upstream code it builds, unpatched, from termux-app (pinned in
+`app/sources.json`):
 `terminal-emulator` and `terminal-view` (and their `libtermux.so`, built
 with the NDK in Nix). The build copies `bootstrap-aarch64.zip` into the
 app's assets and the launcher into its native libraries, which makes the APK
 18.1 MB.
 
-Upstream Termux:API, pinned as the `termux-api` flake input, is the module
+Upstream Termux:API, pinned in `app/sources.json`, is the module
 `app/termux-api` with the patches in `app/termux-api-patches`. It compiles
 against `app/termux-shared-compat`, the part of Termux's termux-shared that
 it uses, under the same class names and with droid-nix's values; a new
@@ -317,15 +318,16 @@ droid-nix may "Display over other apps", as in Termux.
 
 ### Updating termux-app and Termux:API
 
-Set the new rev in the `termux-app` or `termux-api` input in `flake.nix`, run
-`nix flake update termux-app` (or `termux-api`) and `nix run .#update-deps`,
-and rebuild. terminal-emulator and terminal-view are used unpatched. For
-Termux:API, a compile error names what to add to `app/termux-shared-compat`,
-and the patches are kept like this:
+Run `nix run .#update-termux-app` (or `.#update-termux-api`) from the flake
+root, which pins the head of upstream's default branch (or the rev given after
+`--`) in `app/sources.json`, then `nix run .#update-deps`, and rebuild.
+terminal-emulator and terminal-view are used unpatched. For Termux:API, a
+compile error names what to add to `app/termux-shared-compat`, and the
+patches are kept like this:
 
 ```sh
 git clone https://github.com/termux/termux-api && cd termux-api
-git checkout <old rev from flake.nix>
+git checkout <old rev from app/sources.json>
 git am /path/to/droid-nix/app/termux-api-patches/*.patch
 git rebase <new rev>               # resolve conflicts, keep the series short
 rm /path/to/droid-nix/app/termux-api-patches/*.patch

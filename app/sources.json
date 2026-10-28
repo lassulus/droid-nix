@@ -1,0 +1,10 @@
+{
+  "termux-app": {
+    "rev": "8629e632fcb95da272221be327db653fb24befe9",
+    "hash": "sha256-XhuzluXUBuqyFScTR5SMzBIUFSXbsEzmWJHkEC2M+cw="
+  },
+  "termux-api": {
+    "rev": "fc26ce17e3badf85d4df191af364fcf7798047f1",
+    "hash": "sha256-7dAMxhCF/nvzIqOjamxazBKm8AWmpJQjKaO1XT5kShs="
+  }
+}
