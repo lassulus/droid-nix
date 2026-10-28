@@ -2,6 +2,9 @@ package us.lassul.droidnix;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
+import android.os.Environment;
+import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
 
@@ -104,6 +107,30 @@ final class Installer {
 
         if (!staging.renameTo(usr)) throw new IOException("cannot rename " + staging + " to " + usr);
         mkdirs(Shell.home(activity));
+    }
+
+    /**
+     * ~/storage (termux-setup-storage): links to the shared storage, its
+     * common directories, and the app's directories on other volumes
+     * (external-N, media-N).
+     */
+    static void setupStorage(Context context) throws IOException, ErrnoException {
+        File storage = new File(Shell.home(context), "storage");
+        delete(storage);
+        mkdirs(storage);
+        File shared = Environment.getExternalStorageDirectory();
+        Os.symlink(shared.getPath(), new File(storage, "shared").getPath());
+        String[][] directories = {{"documents", Environment.DIRECTORY_DOCUMENTS}, {"downloads", Environment.DIRECTORY_DOWNLOADS},
+            {"dcim", Environment.DIRECTORY_DCIM}, {"pictures", Environment.DIRECTORY_PICTURES}, {"music", Environment.DIRECTORY_MUSIC},
+            {"movies", Environment.DIRECTORY_MOVIES}, {"podcasts", Environment.DIRECTORY_PODCASTS}, {"audiobooks", "Audiobooks"}};
+        for (String[] directory : directories)
+            Os.symlink(new File(shared, directory[1]).getPath(), new File(storage, directory[0]).getPath());
+        File[] external = context.getExternalFilesDirs(null);
+        for (int i = 1; i < external.length; i++)
+            if (external[i] != null) Os.symlink(external[i].getPath(), new File(storage, "external-" + i).getPath());
+        File[] media = context.getExternalMediaDirs();
+        for (int i = 1; i < media.length; i++)
+            if (media[i] != null) Os.symlink(media[i].getPath(), new File(storage, "media-" + i).getPath());
     }
 
     private static void mkdirs(File directory) throws IOException {

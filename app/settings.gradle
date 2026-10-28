@@ -9,6 +9,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // termux-am-library
+        maven { url "https://jitpack.io" }
     }
 }
 

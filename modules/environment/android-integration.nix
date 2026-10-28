@@ -51,7 +51,7 @@ in
       description = ''
         Provide a `termux-open` command
         that opens files or urls in external apps
-        (uses `com.termux.app.TermuxOpenReceiver`).
+        (through the droid-nix app).
       '';
     };
 

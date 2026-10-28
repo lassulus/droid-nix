@@ -38,4 +38,5 @@ dependencies {
     implementation project(":terminal-view")
     implementation "androidx.core:core:1.13.1"
     implementation "androidx.drawerlayout:drawerlayout:1.2.0"
+    implementation "com.termux:termux-am-library:v2.0.0"
 }

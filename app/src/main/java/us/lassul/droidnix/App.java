@@ -24,6 +24,8 @@ public final class App extends Application {
             }
             android.uncaughtException(thread, e);
         });
+
+        AmServer.start(this);
     }
 
 }

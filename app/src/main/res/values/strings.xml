@@ -7,6 +7,9 @@
         <item quantity="other">%d sessions</item>
     </plurals>
     <string name="exit">Exit</string>
+    <string name="acquire_wake_lock">Acquire wakelock</string>
+    <string name="release_wake_lock">Release wakelock</string>
+    <string name="wake_lock_held">" (wake lock held)"</string>
     <string name="failsafe">failsafe</string>
     <string name="installing">Installing the bootstrap…</string>
     <string name="install_failed">Installing the bootstrap failed</string>

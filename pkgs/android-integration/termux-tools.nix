@@ -30,11 +30,14 @@ stdenvNoCC.mkDerivation rec {
       --replace-quiet @TERMUX_APP_PACKAGE@ ${androidApp.packageName}
     substituteInPlace scripts/termux-open.in \
       --replace-quiet 'getopt ' '${getopt}/bin/getopt '
+    substituteInPlace scripts/termux-open.in \
+      --replace-fail @TERMUX_APP_PACKAGE@.app.TermuxOpenReceiver @TERMUX_APP_PACKAGE@.OpenReceiver
+    substituteInPlace scripts/termux-wake-lock.in scripts/termux-wake-unlock.in \
+      --replace-fail @TERMUX_APP_PACKAGE@.app.TermuxService @TERMUX_APP_PACKAGE@.TerminalService
     substituteInPlace \
       scripts/termux-open.in \
       scripts/termux-wake-lock.in \
       scripts/termux-wake-unlock.in \
-      --replace-quiet @TERMUX_APP_PACKAGE@.app com.termux.app \
       --replace-quiet @TERMUX_APP_PACKAGE@ ${androidApp.packageName}
     substituteInPlace scripts/termux-reload-settings.in \
       --replace-quiet @TERMUX_APP_PACKAGE@ ${androidApp.packageName}

@@ -3,8 +3,8 @@
 { stdenv, fetchFromGitHub, cmake, androidApp }:
 
 let
-  appPath = "${androidApp.dataDir}/files/apps/${androidApp.packageName}";
-  socketPath = "${appPath}/termux-am/am.sock";
+  # The app's am server (app/src/main/java/us/lassul/droidnix/AmServer.java).
+  socketPath = "${androidApp.dataDir}/files/am.sock";
 in
 stdenv.mkDerivation rec {
   name = "termux-am";
