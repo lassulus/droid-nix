@@ -19,7 +19,25 @@
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
+        "termux-api": "termux-api",
         "termux-app": "termux-app"
+      }
+    },
+    "termux-api": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789611382,
+        "narHash": "sha256-7dAMxhCF/nvzIqOjamxazBKm8AWmpJQjKaO1XT5kShs=",
+        "owner": "termux",
+        "repo": "termux-api",
+        "rev": "fc26ce17e3badf85d4df191af364fcf7798047f1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "termux",
+        "repo": "termux-api",
+        "rev": "fc26ce17e3badf85d4df191af364fcf7798047f1",
+        "type": "github"
       }
     },
     "termux-app": {

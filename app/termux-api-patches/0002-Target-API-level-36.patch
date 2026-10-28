@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes <hermes@lassul.us>
+Date: Wed, 28 Oct 2026 14:00:00 +0100
+Subject: [PATCH 2/2] Target API level 36
+
+The droid-nix app targets API level 36, upstream Termux:API 28.
+
+- The PendingIntent of a notification's reply button must say whether
+  it is mutable (31); it is, the reply text is added to it.
+- The app may not execve its data files (29), so notification actions
+  and job scheduler scripts run through droid-nix's $PREFIX/bin/login,
+  which the Termux service runs with its /system/bin/sh interpreter
+  and which execs its arguments in the Nix environment.
+- Location: drop the check for the background location permission
+  (Android 11). droid-nix's own terminal sends the request, so the app
+  is in the foreground.
+- Text-to-speech engines and speech recognizers are only visible to
+  apps that declare them in <queries> (30).
+---
+ app/src/main/AndroidManifest.xml                   | 11 +++++++++++
+ .../java/com/termux/api/apis/JobSchedulerAPI.java  |  5 ++++-
+ .../main/java/com/termux/api/apis/LocationAPI.java | 14 +++-----------
+ .../java/com/termux/api/apis/NotificationAPI.java  | 11 +++++++----
+ 4 files changed, 25 insertions(+), 16 deletions(-)
+
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index e797819..23a8442 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -55,6 +55,17 @@
+     <uses-feature android:name="android.hardware.wifi" android:required="false" />
+     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+ 
++    <!-- From targetSdkVersion 30 on, the text-to-speech engines and speech
++         recognizers are only visible to apps that declare them. -->
++    <queries>
++        <intent>
++            <action android:name="android.intent.action.TTS_SERVICE" />
++        </intent>
++        <intent>
++            <action android:name="android.speech.RecognitionService" />
++        </intent>
++    </queries>
++
+ 
+ 
+     <application>
+diff --git a/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java b/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java
+index bfd12a2..bafed39 100644
+--- a/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java
++++ b/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java
+@@ -281,12 +281,15 @@ public class JobSchedulerAPI {
+             String filePath = extras.getString(SCRIPT_FILE_PATH);
+ 
+             ExecutionCommand executionCommand = new ExecutionCommand();
+-            executionCommand.executableUri = new Uri.Builder().scheme(TERMUX_SERVICE.URI_SCHEME_SERVICE_EXECUTE).path(filePath).build();
++            // Run the script through droid-nix's login, see NotificationAPI.BIN_LOGIN.
++            executionCommand.executableUri = new Uri.Builder().scheme(TERMUX_SERVICE.URI_SCHEME_SERVICE_EXECUTE).path(NotificationAPI.BIN_LOGIN).build();
++            executionCommand.arguments = new String[]{filePath};
+             executionCommand.runner = ExecutionCommand.Runner.APP_SHELL.getName();
+ 
+             // Create execution intent with the action TERMUX_SERVICE#ACTION_SERVICE_EXECUTE to be sent to the TERMUX_SERVICE
+             Intent executionIntent = new Intent(TERMUX_SERVICE.ACTION_SERVICE_EXECUTE, executionCommand.executableUri);
+             executionIntent.setClassName(TermuxConstants.TERMUX_PACKAGE_NAME, TermuxConstants.TERMUX_APP.TERMUX_SERVICE_NAME);
++            executionIntent.putExtra(TERMUX_SERVICE.EXTRA_ARGUMENTS, executionCommand.arguments);
+             executionIntent.putExtra(TERMUX_SERVICE.EXTRA_RUNNER, executionCommand.runner);
+             executionIntent.putExtra(TERMUX_SERVICE.EXTRA_BACKGROUND, true); // Also pass in case user using termux-app version < 0.119.0
+ 
+diff --git a/app/src/main/java/com/termux/api/apis/LocationAPI.java b/app/src/main/java/com/termux/api/apis/LocationAPI.java
+index 82eafa7..159cd11 100644
+--- a/app/src/main/java/com/termux/api/apis/LocationAPI.java
++++ b/app/src/main/java/com/termux/api/apis/LocationAPI.java
+@@ -76,17 +76,9 @@ public class LocationAPI {
+             public void writeJson(final JsonWriter out) throws Exception {
+                 LocationManager manager = (LocationManager) LocationService.this.getSystemService(Context.LOCATION_SERVICE);
+ 
+-                // If on Android `>= 11` and background location permission is missing, ask user to grant it.
+-                // - https://developer.android.com/reference/android/Manifest.permission#ACCESS_BACKGROUND_LOCATION
+-                // - https://developer.android.com/develop/sensors-and-location/location/permissions/background
+-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+-                    !PermissionUtils.checkPermission(LocationService.this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+-                    out.beginObject()
+-                        .name("API_ERROR")
+-                        .value("Background location permission not granted." +
+-                                " Grant it manually from Android Settings -> Apps -> " + TermuxConstants.TERMUX_API_APP_NAME + " -> Permissions -> Location -> Allow all the time").endObject();
+-                    return;
+-                }
++                // droid-nix's own terminal sends the request, so the app is in the foreground
++                // and needs no background location permission ("Allow all the time"), unlike
++                // Termux:API, which is a separate app.
+ 
+                 String provider = intent.getStringExtra("provider");
+                 if (provider == null)
+diff --git a/app/src/main/java/com/termux/api/apis/NotificationAPI.java b/app/src/main/java/com/termux/api/apis/NotificationAPI.java
+index bc4ca8a..8bb42ca 100644
+--- a/app/src/main/java/com/termux/api/apis/NotificationAPI.java
++++ b/app/src/main/java/com/termux/api/apis/NotificationAPI.java
+@@ -40,7 +40,10 @@ public class NotificationAPI {
+ 
+     private static final String LOG_TAG = "NotificationAPI";
+ 
+-    public static final String BIN_SH = TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/sh";
++    // The app may not execve its data files (targetSdkVersion 29 and later), so actions
++    // run through droid-nix's login, a /system/bin/sh script that the service runs with
++    // its interpreter and that execs its arguments in the Nix environment.
++    public static final String BIN_LOGIN = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/login";
+     private static final String CHANNEL_ID = "termux-notification";
+     private static final String CHANNEL_TITLE = "Termux API notification channel";
+     private static final String KEY_TEXT_REPLY = "TERMUX_TEXT_REPLY";
+@@ -350,7 +353,7 @@ public class NotificationAPI {
+                 PendingIntent.getBroadcast(context,
+                         buttonNum,
+                         getMessageReplyIntent((Intent)intent.clone(), buttonText, buttonAction, notificationId),
+-                        PendingIntent.FLAG_UPDATE_CURRENT);
++                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntentUtils.getPendingIntentMutableFlag());
+ 
+         // Create the reply action and add the remote input.
+         return new NotificationCompat.Action.Builder(R.drawable.ic_event_note_black_24dp,
+@@ -416,8 +419,8 @@ public class NotificationAPI {
+ 
+     static Intent createExecuteIntent(String action){
+         ExecutionCommand executionCommand = new ExecutionCommand();
+-        executionCommand.executableUri = new Uri.Builder().scheme(TERMUX_SERVICE.URI_SCHEME_SERVICE_EXECUTE).path(BIN_SH).build();
+-        executionCommand.arguments = new String[]{"-c", action};
++        executionCommand.executableUri = new Uri.Builder().scheme(TERMUX_SERVICE.URI_SCHEME_SERVICE_EXECUTE).path(BIN_LOGIN).build();
++        executionCommand.arguments = new String[]{"sh", "-c", action};
+         executionCommand.runner = ExecutionCommand.Runner.APP_SHELL.getName();
+ 
+         // Create execution intent with the action TERMUX_SERVICE#ACTION_SERVICE_EXECUTE to be sent to the TERMUX_SERVICE
