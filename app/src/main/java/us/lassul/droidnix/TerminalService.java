@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.provider.Settings;
@@ -31,6 +32,12 @@ public final class TerminalService extends Service {
     /** termux-wake-lock and termux-wake-unlock, and the notification's button. */
     static final String ACTION_WAKE_LOCK = "us.lassul.droidnix.service_wake_lock";
     static final String ACTION_WAKE_UNLOCK = "us.lassul.droidnix.service_wake_unlock";
+    /** Termux's service_execute (com.termux.shared.termux.TermuxConstants in termux-shared-compat). */
+    static final String ACTION_EXECUTE = "us.lassul.droidnix.service_execute";
+    static final String EXTRA_ARGUMENTS = "us.lassul.droidnix.execute.arguments";
+    static final String EXTRA_WORKDIR = "us.lassul.droidnix.execute.cwd";
+    static final String EXTRA_STDIN = "us.lassul.droidnix.execute.stdin";
+    static final String EXTRA_PENDING_INTENT = "pendingIntent";
 
     private static final int NOTIFICATION_ID = 1;
     private static final String CHANNEL = "sessions";
@@ -42,6 +49,7 @@ public final class TerminalService extends Service {
     private TerminalActivity activity;
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
+    private int backgroundCommands;
 
     final class Binder extends android.os.Binder {
         TerminalService service() {
@@ -68,8 +76,30 @@ public final class TerminalService extends Service {
             acquireWakeLock();
         } else if (ACTION_WAKE_UNLOCK.equals(action)) {
             releaseWakeLock();
+        } else if (ACTION_EXECUTE.equals(action)) {
+            execute(intent);
         }
         return START_NOT_STICKY;
+    }
+
+    /**
+     * Runs the executable in the intent's data (scheme us.lassul.droidnix.file)
+     * in the background: Termux:API's notification actions and jobs.
+     */
+    private void execute(Intent intent) {
+        String[] arguments = intent.getStringArrayExtra(EXTRA_ARGUMENTS);
+        String[] command = Shell.command(intent.getData().getPath(), arguments != null ? arguments : new String[0]);
+        backgroundCommands++;
+        BackgroundCommand.start(this, command, intent.getStringExtra(EXTRA_WORKDIR), intent.getStringExtra(EXTRA_STDIN),
+            (PendingIntent) intent.getParcelableExtra(EXTRA_PENDING_INTENT), () -> new Handler(getMainLooper()).post(() -> {
+                backgroundCommands--;
+                stopIfIdle();
+            }));
+    }
+
+    /** Stops the service when nothing runs in it and no activity shows it. */
+    private void stopIfIdle() {
+        if (sessions.isEmpty() && backgroundCommands == 0 && activity == null) stopSelf();
     }
 
     @Override
@@ -117,6 +147,7 @@ public final class TerminalService extends Service {
     void setActivity(TerminalActivity activity) {
         this.activity = activity;
         for (TerminalSession session : sessions) session.updateTerminalSessionClient(client());
+        stopIfIdle();
     }
 
     private TerminalSessionClient client() {
@@ -143,8 +174,8 @@ public final class TerminalService extends Service {
     void removeSession(TerminalSession session) {
         session.finishIfRunning();
         sessions.remove(session);
-        if (sessions.isEmpty()) stopSelf();
-        else updateNotification();
+        updateNotification();
+        stopIfIdle();
     }
 
     void updateNotification() {

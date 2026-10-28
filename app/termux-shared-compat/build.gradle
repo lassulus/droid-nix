@@ -1,0 +1,19 @@
+plugins {
+    id "com.android.library"
+}
+
+// The part of termux-shared that Termux:API's code uses, under the same
+// names, with droid-nix's values: Termux:API compiles against it unpatched.
+android {
+    namespace "com.termux.shared"
+    compileSdk project.properties.compileSdkVersion.toInteger()
+
+    defaultConfig {
+        minSdk project.properties.minSdkVersion.toInteger()
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}

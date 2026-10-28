@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Termux:API's dialogs show errors in these. -->
+    <color name="red_error">#FFD50000</color>
+    <color name="red_error_link">#FFFF5252</color>
+</resources>

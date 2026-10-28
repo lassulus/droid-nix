@@ -1,222 +1,22 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Hermes <hermes@lassul.us>
-Date: Wed, 28 Oct 2026 14:00:00 +0100
+Date: Wed, 28 Oct 2026 18:00:00 +0100
 Subject: [PATCH 1/2] Build as a module of the droid-nix app
 
-droid-nix carries Termux:API in its own APK instead of a separate app
-that shares its user id. droid-nix copies this repository into its
-termux-app tree, whose settings.gradle includes app/ as the library
-module ":termux-api" and whose app depends on it:
+droid-nix carries Termux:API in its own APK, whose package is not
+com.termux.api, so the receiver's class name no longer follows from the
+package name.
 
-- build.gradle: com.android.library with the SDK versions of the
-  termux-app tree and its termux-shared module; no application id,
-  version, signing, minification or APK names, which are the app's;
-- manifest: no sharedUserId, application attributes, launcher alias or
-  ReportActivity, the app has its own; the manifest placeholders are
-  the app's. Drop READ_PRIVILEGED_PHONE_STATE (system apps only) and
-  REQUEST_DELETE_PACKAGES (unused);
-- TermuxAPIApplication is not used, the app has its own application
-  class with logging and crash handling; the receiver sets
-  ResultReturner's context, which every API call needs;
-- the receiver's class name no longer follows from the package name,
-  which is the app's.
+The droid-nix app sets ResultReturner's context in its own application
+class, and leaves out TermuxAPIApplication and the socket listener it
+starts (droid-nix's termux-api command uses am broadcast); the receiver
+no longer sets the log level from its preferences.
 ---
- app/build.gradle                              | 72 ++-----------------
- app/src/main/AndroidManifest.xml              | 37 +---------
- .../com/termux/api/TermuxAPIConstants.java    |  2 +-
- .../com/termux/api/TermuxApiReceiver.java     |  4 +-
- 4 files changed, 11 insertions(+), 104 deletions(-)
+ app/src/main/java/com/termux/api/TermuxAPIConstants.java | 2 +-
+ app/src/main/java/com/termux/api/TermuxApiReceiver.java  | 1 -
+ 2 files changed, 1 insertion(+), 2 deletions(-)
 
-diff --git a/app/build.gradle b/app/build.gradle
-index b64dd47..019cc21 100644
---- a/app/build.gradle
-+++ b/app/build.gradle
-@@ -1,46 +1,15 @@
--apply plugin: 'com.android.application'
-+apply plugin: 'com.android.library'
- 
-+// Built as the ":termux-api" module of droid-nix's termux-app tree, whose
-+// app depends on it and whose gradle.properties sets the SDK versions. The
-+// app's manifest placeholders fill the ones in this manifest.
- android {
-     namespace "com.termux.api"
- 
-     compileSdk project.properties.compileSdkVersion.toInteger()
--    def appVersionName = System.getenv("TERMUX_API_APP__BUILD__APP_VERSION_NAME") ?: ""
--    def apkVersionTag = System.getenv("TERMUX_API_APP__BUILD__APK_VERSION_TAG") ?: ""
- 
-     defaultConfig {
--        applicationId "com.termux.api"
-         minSdk project.properties.minSdkVersion.toInteger()
--        targetSdk project.properties.targetSdkVersion.toInteger()
--        versionCode 1002
--        versionName "0.53.0"
--
--        if (appVersionName) versionName = appVersionName
--        validateVersionName(versionName)
--
--        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
--        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
--        manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
--    }
--
--    signingConfigs {
--        debug {
--            storeFile file('testkey_untrusted.jks')
--            keyAlias 'alias'
--            storePassword 'xrj45yWGLbsO7W0v'
--            keyPassword 'xrj45yWGLbsO7W0v'
--        }
--    }
--
--    buildTypes {
--        release {
--            minifyEnabled true
--            shrinkResources false // Reproducible builds
--            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
--        }
--
--        debug {
--            signingConfig signingConfigs.debug
--        }
-     }
- 
-     compileOptions {
-@@ -50,19 +19,6 @@ android {
-         sourceCompatibility JavaVersion.VERSION_11
-         targetCompatibility JavaVersion.VERSION_11
-     }
--
--    applicationVariants.all { variant ->
--        variant.outputs.all { output ->
--            outputFileName = new File("termux-api-app_" +
--                    (apkVersionTag ? apkVersionTag : "v" + versionName + "+" + variant.buildType.name) + ".apk")
--        }
--    }
--
--    packagingOptions {
--        // Remove terminal-emulator and termux-shared JNI libs added via termux-shared dependency
--        exclude "lib/*/libtermux.so"
--        exclude "lib/*/liblocal-socket.so"
--    }
- }
- 
- dependencies {
-@@ -73,25 +29,7 @@ dependencies {
-     implementation "androidx.media:media:1.7.0"
-     implementation "androidx.preference:preference:1.2.1"
- 
--    implementation "com.termux.termux-app:termux-shared:8aca6dbbf4"
--    // Use if below libraries are published locally by termux-app with `./gradlew publishReleasePublicationToMavenLocal` and used with `mavenLocal()`.
--    // If updates are done, republish there and sync project with gradle files here
--    // https://github.com/termux/termux-app/wiki/Termux-Libraries
--    //implementation "com.termux:termux-shared:0.118.0"
-+    implementation project(":termux-shared")
- 
-     implementation "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
- }
--
--task versionName {
--    doLast {
--        print android.defaultConfig.versionName
--    }
--}
--
--@SuppressWarnings("UnnecessaryQualifiedReference")
--static def validateVersionName(String versionName) {
--    // https://semver.org/spec/v2.0.0.html#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
--    // ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$
--    if (!java.util.regex.Pattern.matches("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?\$", versionName))
--        throw new GradleException("The versionName '" + versionName + "' is not a valid version as per semantic version '2.0.0' spec in the format 'major.minor.patch(-prerelease)(+buildmetadata)'. https://semver.org/spec/v2.0.0.html.")
--}
-diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 69fc9ca..e797819 100644
---- a/app/src/main/AndroidManifest.xml
-+++ b/app/src/main/AndroidManifest.xml
-@@ -1,7 +1,6 @@
- <?xml version="1.0" encoding="utf-8"?>
- <manifest xmlns:android="http://schemas.android.com/apk/res/android"
--    xmlns:tools="http://schemas.android.com/tools"
--    android:sharedUserId="${TERMUX_PACKAGE_NAME}">
-+    xmlns:tools="http://schemas.android.com/tools">
- 
- 
- 
-@@ -20,12 +19,10 @@
-     <uses-permission android:name="android.permission.READ_CALL_LOG" />
-     <uses-permission android:name="android.permission.READ_CONTACTS"/>
-     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
--    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" tools:ignore="ProtectedPermissions" />
-     <uses-permission android:name="android.permission.READ_SMS" />
-     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-     <uses-permission android:name="android.permission.RECORD_AUDIO" />
--    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-     <uses-permission android:name="android.permission.SEND_SMS" />
-@@ -60,14 +57,7 @@
- 
- 
- 
--    <application
--        android:name=".TermuxAPIApplication"
--        android:allowBackup="true"
--        android:icon="@drawable/ic_launcher"
--        android:label="@string/app_name"
--        android:supportsRtl="true"
--        android:theme="@android:style/Theme.Material.Light"
--        tools:ignore="GoogleAppIndexingWarning">
-+    <application>
- 
-         <activity
-             android:name=".activities.TermuxAPIMainActivity"
-@@ -75,16 +65,6 @@
-             android:theme="@style/Theme.BaseActivity.DayNight.NoActionBar">
-         </activity>
- 
--        <activity-alias
--            android:name=".activities.TermuxAPILauncherActivity"
--            android:exported="true"
--            android:targetActivity=".activities.TermuxAPIMainActivity">
--            <intent-filter>
--                <action android:name="android.intent.action.MAIN"/>
--                <category android:name="android.intent.category.LAUNCHER"/>
--            </intent-filter>
--        </activity-alias>
--
-         <activity
-             android:name=".settings.activities.TermuxAPISettingsActivity"
-             android:exported="true"
-@@ -139,15 +119,6 @@
-             android:excludeFromRecents="true"
-             android:exported="false" />
- 
--        <!-- If you see "Unresolved package" errors for ReportActivity with manifest placeholder,
--             ignore it. Android Studio linter is broken and correct package name will be used at build time. -->
--        <activity
--            android:name="${TERMUX_PACKAGE_NAME}.shared.activities.ReportActivity"
--            android:exported="false"
--            android:documentLaunchMode="intoExisting"
--            android:theme="@style/Theme.MarkdownViewActivity.DayNight"
--            tools:ignore="MissingClass" />
--
- 
- 
-         <provider
-@@ -162,10 +133,6 @@
-         <receiver android:name=".TermuxApiReceiver"
-             android:exported="false" />
- 
--        <receiver
--            android:name="${TERMUX_PACKAGE_NAME}.shared.activities.ReportActivity$ReportActivityBroadcastReceiver"
--            android:exported="false"
--            tools:ignore="MissingClass" />
- 
- 
- 
 diff --git a/app/src/main/java/com/termux/api/TermuxAPIConstants.java b/app/src/main/java/com/termux/api/TermuxAPIConstants.java
-index e27e5b9..d44d6bc 100644
 --- a/app/src/main/java/com/termux/api/TermuxAPIConstants.java
 +++ b/app/src/main/java/com/termux/api/TermuxAPIConstants.java
 @@ -9,7 +9,7 @@ public class TermuxAPIConstants {
@@ -225,21 +25,17 @@ index e27e5b9..d44d6bc 100644
       */
 -    public static final String TERMUX_API_RECEIVER_NAME = TERMUX_API_PACKAGE_NAME + ".TermuxApiReceiver"; // Default to "com.termux.api.TermuxApiReceiver"
 +    public static final String TERMUX_API_RECEIVER_NAME = TermuxApiReceiver.class.getName(); // Default to "com.termux.api.TermuxApiReceiver"
- 
+
      /** The Uri authority for Termux:API app file shares */
      public static final String TERMUX_API_FILE_SHARE_URI_AUTHORITY = TERMUX_PACKAGE_NAME + ".sharedfiles"; // Default: "com.termux.sharedfiles"
 diff --git a/app/src/main/java/com/termux/api/TermuxApiReceiver.java b/app/src/main/java/com/termux/api/TermuxApiReceiver.java
-index 56e5977..89c72fd 100644
 --- a/app/src/main/java/com/termux/api/TermuxApiReceiver.java
 +++ b/app/src/main/java/com/termux/api/TermuxApiReceiver.java
-@@ -59,7 +59,9 @@ public class TermuxApiReceiver extends BroadcastReceiver {
- 
+@@ -59,7 +59,6 @@ public class TermuxApiReceiver extends BroadcastReceiver {
+
      @Override
      public void onReceive(Context context, Intent intent) {
 -        TermuxAPIApplication.setLogConfig(context, false);
-+        // In droid-nix the API is part of the Termux app, whose application class
-+        // sets up logging and crash handling. Every API call passes here first.
-+        ResultReturner.setContext(context);
          Logger.logDebug(LOG_TAG, "Intent Received:\n" + IntentUtils.getIntentString(intent));
- 
+
          try {

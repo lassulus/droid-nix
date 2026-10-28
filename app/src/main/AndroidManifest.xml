@@ -13,6 +13,54 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- Termux:API; the runtime permissions are asked for by the commands that need them. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.TRANSMIT_IR" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+    <!-- Not granted to anyone: the termux-share provider is only reached through its grants. -->
+    <permission
+        android:name="us.lassul.droidnix.sharedfiles.READ_WRITE"
+        android:protectionLevel="signature" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <!-- Text-to-speech engines and speech recognizers are only visible to apps that declare them. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:icon="@mipmap/ic_launcher"
@@ -65,6 +113,102 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+
+        <!-- Termux:API (pkgs/android-integration/termux-api.nix): only the app's
+             own am server sends to the receiver. -->
+        <receiver
+            android:name="com.termux.api.TermuxApiReceiver"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.KeepAliveService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.JobSchedulerAPI$JobSchedulerService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service
+            android:name="com.termux.api.apis.LocationAPI$LocationService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.MediaPlayerAPI$MediaPlayerService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.MicRecorderAPI$MicRecorderService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.NotificationListAPI$NotificationService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="com.termux.api.apis.SensorAPI$SensorReaderService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.SpeechToTextAPI$SpeechToTextService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.TextToSpeechAPI$TextToSpeechService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.WallpaperAPI$WallpaperService"
+            android:exported="false" />
+        <service
+            android:name="com.termux.api.apis.UsbAPI$UsbService"
+            android:exported="false" />
+        <activity
+            android:name="com.termux.api.activities.TermuxApiPermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+        <activity
+            android:name="com.termux.api.apis.DialogAPI$DialogActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/DialogTheme" />
+        <activity
+            android:name="com.termux.api.apis.FingerprintAPI$FingerprintActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/TransparentTheme" />
+        <activity
+            android:name="com.termux.api.apis.NfcAPI$NfcActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/DialogTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.nfc.action.TAG_DISCOVERED" />
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <action android:name="android.nfc.action.TECH_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.action.TECH_DISCOVERED"
+                android:resource="@xml/nfc_tech_filter" />
+        </activity>
+        <activity
+            android:name="com.termux.api.apis.SAFAPI$SAFActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/TransparentTheme" />
+        <activity
+            android:name="com.termux.api.apis.StorageGetAPI$StorageActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <provider
+            android:name="com.termux.api.apis.ShareAPI$ContentProvider"
+            android:authorities="us.lassul.droidnix.sharedfiles"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="us.lassul.droidnix.sharedfiles.READ_WRITE" />
 
     </application>
 

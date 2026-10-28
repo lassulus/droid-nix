@@ -16,6 +16,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "droid-nix"
 
-// Upstream termux-app's terminal emulator and view, unpatched: app/default.nix
-// copies their src/main next to these build.gradle files.
-include ":terminal-emulator", ":terminal-view"
+// Upstream termux-app's terminal emulator and view, unpatched, and upstream
+// Termux:API with termux-api-patches: app/default.nix copies their src/main
+// next to these build.gradle files. termux-shared-compat is ours.
+include ":terminal-emulator", ":terminal-view", ":termux-api", ":termux-shared-compat"
