@@ -90,18 +90,11 @@
         description = "droid-nix on-device configuration";
       };
 
-      # Evaluates the template configuration. uid/gid are detected by building
-      # on the device, so the check sets them.
+      # Evaluates the template configuration.
       checks.${system}.template = pkgs.writeText "droid-nix-template-drv" (builtins.unsafeDiscardOutputDependency
         (self.lib.droidNixConfiguration {
           pkgs = nixpkgs.legacyPackages.aarch64-linux;
-          modules = [
-            ./templates/default/droid-nix.nix
-            {
-              user.uid = 10000;
-              user.gid = 10000;
-            }
-          ];
+          modules = [ ./templates/default/droid-nix.nix ];
         }).activationPackage.drvPath
       );
     };
