@@ -22,8 +22,11 @@ stdenvNoCC.mkDerivation rec {
   nativeBuildInputs = [ autoreconfHook makeWrapper ];
   propagatedInputs = [ termux-am ];
 
-  # https://github.com/termux/termux-tools/pull/95
-  patches = [ ./termux-tools.patch ];
+  patches = [
+    # https://github.com/termux/termux-tools/pull/95
+    ./termux-tools.patch
+    ./termux-tools-help.patch
+  ];
   postPatch = ''
     substituteInPlace scripts/termux-setup-storage.in \
       --replace-quiet @TERMUX_HOME@ ${androidApp.dataDir}/files/home/ \
@@ -56,12 +59,12 @@ stdenvNoCC.mkDerivation rec {
 
   outputs = [
     "out" # all the unsupported unsorted stuff
-    "setup_storage" # termux-setup-storage
-    "open" # termux-open
-    "open_url" # termux-open-url
-    "reload_settings" # termux-reload-settings
-    "wake_lock" # termux-wake-lock
-    "wake_unlock" # termux-wake-unlock
+    "setup_storage" # droid-nix-setup-storage
+    "open" # droid-nix-open
+    "open_url" # droid-nix-open-url
+    "reload_settings" # droid-nix-reload-settings
+    "wake_lock" # droid-nix-wake-lock
+    "wake_unlock" # droid-nix-wake-unlock
     "xdg_open" # xdg-open
   ];
   postInstall = ''
@@ -93,32 +96,34 @@ stdenvNoCC.mkDerivation rec {
     rm $out/bin/termux-setup-package-manager  # we use Nix
 
     mkdir -p $setup_storage/bin
-    mv $out/bin/termux-setup-storage $setup_storage/bin/
+    mv $out/bin/termux-setup-storage $setup_storage/bin/droid-nix-setup-storage
 
     mkdir -p $open/bin
-    mv $out/bin/termux-open $open/bin/
+    mv $out/bin/termux-open $open/bin/droid-nix-open
 
     mkdir -p $open_url/bin
-    mv $out/bin/termux-open-url $open_url/bin/
+    mv $out/bin/termux-open-url $open_url/bin/droid-nix-open-url
 
     mkdir -p $reload_settings/bin
-    mv $out/bin/termux-reload-settings $reload_settings/bin/
+    mv $out/bin/termux-reload-settings $reload_settings/bin/droid-nix-reload-settings
 
     mkdir -p $wake_lock/bin
-    mv $out/bin/termux-wake-lock $wake_lock/bin/
+    mv $out/bin/termux-wake-lock $wake_lock/bin/droid-nix-wake-lock
 
     mkdir -p $wake_unlock/bin
-    mv $out/bin/termux-wake-unlock $wake_unlock/bin/
+    mv $out/bin/termux-wake-unlock $wake_unlock/bin/droid-nix-wake-unlock
 
     mkdir -p $xdg_open/bin
     rm $out/bin/xdg-open
-    ln -s $open/bin/termux-open $xdg_open/bin/xdg-open
+    ln -s $open/bin/droid-nix-open $xdg_open/bin/xdg-open
+
+    mv $out/bin/termux-backup $out/bin/droid-nix-backup
 
     # check that we didn't package we didn't want to
     find $out | ${gnused}/bin/sed "s|^$out|.|" | sort > effective
     echo . >> expected
     echo ./bin >> expected
-    echo ./bin/termux-backup >> expected           # entirely untested
+    echo ./bin/droid-nix-backup >> expected        # entirely untested
     echo ./share >> expected
     echo ./share/examples >> expected
     echo ./share/examples/termux >> expected

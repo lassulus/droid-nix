@@ -1,0 +1,80 @@
+droid-nix-am: help text for droid-nix, no termux.properties switch
+
+The installed names are changed in termux-am.nix.
+
+--- a/termux-am.sh.in
++++ b/termux-am.sh.in
+@@ -22,14 +22,6 @@ main() {
+         return 0
+     fi
+ 
+-    # TERMUX_APP__AM_SOCKET_SERVER_ENABLED=false is exported by termux-app
+-    # if server is disabled, so don't try to connect to server if its
+-    # disabled and save a few milliseconds and also warn user.
+-    if [[ "$TERMUX_APP__AM_SOCKET_SERVER_ENABLED" == "false" ]]; then
+-        echo "TermuxAm server is not enabled. Make sure \"run-termux-am-socket-server=false\" is not added to the \"~/.termux/termux.properties\" file" 1>&2
+-        return 1;
+-    fi
+-
+     local am_command_string
+ 
+     if [[ "$COMMAND_TYPE" == "am_command_run" ]]; then
+@@ -101,49 +93,30 @@ show_help() {
+ 
+     cat <<'HELP_EOF'
+ 
+-termux-am is a wrapper script that converts the arguments array
++droid-nix-am is a wrapper script that converts the arguments array
+ passed to a single string that can be reused as shell input with the
+-bash 'printf "%q"' built-in and passes the string to termux-am-socket.
++bash 'printf "%q"' built-in and passes the string to droid-nix-am-socket.
+ 
+ 
+ Usage:
+-  termux-am [command_options]
++  droid-nix-am [command_options]
+ 
+ 
+ Available command_options:
+-  [ -h | --help ]    Display termux-am help screen.
++  [ -h | --help ]    Display droid-nix-am help screen.
+   [ --am-help ]      Display am command help screen.
+   [ --version ]      Display version.
+ 
+ 
+-termux-am-socket sends the converted string to
+-"@TERMUX_APPS_DIR@/@TERMUX_APP_PACKAGE@/termux-am/am.sock"
+-local unix socket server that is run by termux-app if enabled, which
+-executes it as an android activity manager (am) command from within
+-termux-app java process via termux/termux-am-library.
+-
+-The termux-am provides similar functionality to "$PREFIX/bin/am"
+-(and "/system/bin/am"), but should be faster since it does not
+-require starting a dalvik vm for every command as done by "am" via
+-termux/TermuxAm.
++droid-nix-am-socket sends the converted string to the local unix
++socket server of the droid-nix app (files/am.sock in its data
++directory), which executes it as an android activity manager (am)
++command in the app's java process.
+ 
+-The server normally only allows termux-app user and root user to
+-connect to it. If you run termux-am with root, then the am commands
+-executed will be run as the termux user and its permissions,
+-capabilities and selinux context instead of root.
+-
+-The server is enabled by default and can be disabled by adding
+-"run-termux-am-socket-server=false" to the
+-"~/.termux/termux.properties"
+-file. Changes require termux-app to be force stopped and restarted.
+-
+-The current state of the server can be checked with the
+-TERMUX_APP__AM_SOCKET_SERVER_ENABLED env variable.
++The server only allows the app's user to connect to it.
+ 
+ HELP_EOF
+ 
+-echo "TERMUX_APP__AM_SOCKET_SERVER_ENABLED=$TERMUX_APP__AM_SOCKET_SERVER_ENABLED"
+-
+ }
+ 
+ main "$@"
