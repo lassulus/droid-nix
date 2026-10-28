@@ -63,10 +63,6 @@ droid-nix does not bring home-manager itself. Add it as an input in
   home-manager.config = { pkgs, ... }: {
     home.stateVersion = "26.05";
 
-    # Building the manual page fails on the phone (a Unix socket path in
-    # /tmp gets too long).
-    manual.manpages.enable = false;
-
     programs.git = {
       enable = true;
       settings.user.name = "Jane Doe";
@@ -80,10 +76,7 @@ droid-nix does not bring home-manager itself. Add it as an input in
 
 Then `droid-nix switch`. The output ends with home-manager's activation
 ("Starting Home Manager activation", "Creating home file links in ...");
-the switch took 9 seconds after the inputs were fetched. `git config
-user.name` prints `Jane Doe`, and `~/.config/git/config` links to the store.
-"User systemd daemon not running. Skipping reload." is expected.
-
-Without `manual.manpages.enable = false`, the switch fails with
-`OSError: [Errno 36] File name too long` while building
-`home-configuration-reference-manpage`.
+the switch took 12 seconds after the inputs were fetched, including
+home-manager's manual page. `git config user.name` prints `Jane Doe`, and
+`~/.config/git/config` links to the store. "User systemd daemon not
+running. Skipping reload." is expected.

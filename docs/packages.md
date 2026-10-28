@@ -36,10 +36,9 @@ Then run `droid-nix switch`. On a Pixel 8a this switch downloaded git, its
 Perl and Python dependencies and the rest from cache.nixos.org and took 37
 seconds. The new commands work in the running shell right away.
 
-Plain `ps` and `ps aux` fail with "Unable to get system boot time" because
-Android does not let apps read `/proc/stat`. `ps -eo pid,args`,
-`pgrep -af NAME` and `top` work. Every process shows up as
-`liblauncher.so` followed by the real command line, so match with `-f`.
+In `ps` and `pgrep`, every process shows up as `liblauncher.so` followed by
+the real command line, so match with `-f` (`pgrep -af NAME`). Android does
+not let apps read the boot time, so `ps aux` shows 1970 as START.
 
 ## Run a program once
 
@@ -71,26 +70,9 @@ download, same versions), pin it in the registry in `flake.nix`:
 
 ## nix profile
 
-Do not use `nix profile add` (or `nix-env -i`) next to droid-nix.
-`nix profile add nixpkgs#jq` works, but it converts the user profile, and
-every `droid-nix switch` after that fails:
-
-```
-Activating installPackages
-nix profile remove
-error: No packages specified.
-```
-
-To recover, roll the user profile back to the generation before the first
-`nix profile` command and switch again; the packages added with
-`nix profile` are gone after that:
-
-```sh
-nix-env --rollback
-droid-nix switch
-```
-
-Add packages to `environment.packages` instead.
+`nix profile add nixpkgs#jq` installs a package outside your
+configuration; `droid-nix switch` keeps it, and `nix profile remove jq`
+removes it. Packages in `environment.packages` are easier to keep track of.
 
 ## Search for packages
 
