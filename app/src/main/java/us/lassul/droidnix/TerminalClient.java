@@ -3,6 +3,7 @@ package us.lassul.droidnix;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
@@ -19,12 +20,16 @@ import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 import com.termux.view.TerminalViewClient;
 
+import java.util.Arrays;
+import java.util.regex.Matcher;
+
 /** The activity's side of the TerminalView and of the sessions while it is bound. */
 final class TerminalClient implements TerminalViewClient, TerminalSessionClient {
 
     private final TerminalActivity activity;
     /** The volume keys, as Ctrl (down) and Fn (up). */
     private boolean volumeDownPressed, volumeUpPressed;
+    private ToneGenerator beep;
 
     TerminalClient(TerminalActivity activity) {
         this.activity = activity;
@@ -46,23 +51,32 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
     @Override
     public void onSingleTapUp(MotionEvent event) {
         TerminalEmulator emulator = activity.terminalView.mEmulator;
+        if (emulator != null && activity.props.getBoolean("terminal-onclick-url-open", false)) {
+            int[] columnAndRow = activity.terminalView.getColumnAndRow(event, true);
+            String word = emulator.getScreen().getWordAtLocation(columnAndRow[0], columnAndRow[1]);
+            Matcher url = TerminalActivity.URL.matcher(word);
+            if (url.find()) {
+                activity.openUrl(url.group());
+                return;
+            }
+        }
         if (emulator != null && !emulator.isMouseTrackingActive() && !event.isFromSource(InputDevice.SOURCE_MOUSE))
             activity.showKeyboard();
     }
 
     @Override
     public boolean shouldBackButtonBeMappedToEscape() {
-        return false;
+        return activity.props.is("back-key", "escape");
     }
 
     @Override
     public boolean shouldEnforceCharBasedInput() {
-        return false;
+        return activity.props.getBoolean("enforce-char-based-input", false);
     }
 
     @Override
     public boolean shouldUseCtrlSpaceWorkaround() {
-        return false;
+        return activity.props.getBoolean("ctrl-space-workaround", false);
     }
 
     @Override
@@ -82,7 +96,8 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
             activity.removeSession(session);
             return true;
         }
-        if (!(event.isCtrlPressed() && event.isAltPressed())) return false;
+        if (!(event.isCtrlPressed() && event.isAltPressed())
+            || activity.props.getBoolean("disable-hardware-keyboard-shortcuts", false)) return false;
 
         // Ctrl+Alt shortcuts, with the unmodified character.
         int c = event.getUnicodeChar(0);
@@ -108,7 +123,8 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
     }
 
     private boolean handleVolumeKey(int keyCode, KeyEvent event, boolean down) {
-        // A full external keyboard keeps its own volume keys.
+        // volume-keys=volume, and a full external keyboard, keep the volume keys.
+        if (activity.props.is("volume-keys", "volume")) return false;
         InputDevice device = event.getDevice();
         if (device != null && device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) return false;
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) volumeDownPressed = down;
@@ -124,22 +140,22 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
 
     @Override
     public boolean readControlKey() {
-        return volumeDownPressed;
+        return activity.extraKeys.read("CTRL") || volumeDownPressed;
     }
 
     @Override
     public boolean readAltKey() {
-        return false;
+        return activity.extraKeys.read("ALT");
     }
 
     @Override
     public boolean readShiftKey() {
-        return false;
+        return activity.extraKeys.read("SHIFT");
     }
 
     @Override
     public boolean readFnKey() {
-        return volumeUpPressed;
+        return activity.extraKeys.read("FN") || volumeUpPressed;
     }
 
     @Override
@@ -148,12 +164,20 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
             onFnCodePoint(codePoint, session);
             return true;
         }
+        if (!ctrlDown) return false;
         // Ctrl+J is Enter.
-        if (ctrlDown && codePoint == 'j' && !session.isRunning()) {
+        if (codePoint == 'j' && !session.isRunning()) {
             activity.removeSession(session);
             return true;
         }
-        return false;
+        int c = Character.toLowerCase(codePoint);
+        Props props = activity.props;
+        if (c == props.getShortcut("shortcut.create-session")) activity.newSession(false);
+        else if (c == props.getShortcut("shortcut.next-session")) activity.switchSession(true);
+        else if (c == props.getShortcut("shortcut.previous-session")) activity.switchSession(false);
+        else if (c == props.getShortcut("shortcut.rename-session")) activity.renameSession(session);
+        else return false;
+        return true;
     }
 
     /** Volume up with a key: arrows, page up/down, function keys and the like. */
@@ -178,6 +202,10 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
             case '.': character = 28; break; // Ctrl+\
             case 'b': case 'f': case 'x': character = lowerCase; alt = true; break; // Alt+b, f, x
             case '0': keyCode = KeyEvent.KEYCODE_F10; break;
+            case 'q': case 'k':
+                activity.toggleExtraKeys();
+                volumeUpPressed = false;
+                break;
             case 'v':
                 activity.getSystemService(AudioManager.class).adjustSuggestedStreamVolume(
                     AudioManager.ADJUST_SAME, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI);
@@ -230,7 +258,12 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
 
     @Override
     public void onBell(TerminalSession session) {
-        activity.getSystemService(Vibrator.class).vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
+        if (activity.props.is("bell-character", "ignore")) return;
+        if (activity.props.is("bell-character", "beep")) {
+            if (beep == null) beep = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, ToneGenerator.MAX_VOLUME);
+            beep.startTone(ToneGenerator.TONE_PROP_BEEP, 50);
+        } else
+            activity.getSystemService(Vibrator.class).vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
     }
 
     @Override
@@ -249,7 +282,8 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
 
     @Override
     public Integer getTerminalCursorStyle() {
-        return null;
+        int style = Arrays.asList("block", "underline", "bar").indexOf(activity.props.get("terminal-cursor-style", "block"));
+        return style != -1 ? style : null;
     }
 
     // Logging, for both
