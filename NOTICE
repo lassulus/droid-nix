@@ -7,8 +7,10 @@ droid-nix contains code from other projects:
   in AUTHORS, licensed under the MIT License, see LICENSE. Files carry their
   original copyright headers.
 
-- app/patches modify Termux (https://github.com/termux/termux-app) and,
-  like Termux, are licensed under the GNU General Public License v3.0.
-  Several patches are based on nix-on-droid-app
-  (https://github.com/nix-community/nix-on-droid-app); their headers name
-  the original commits and authors.
+- app/ is built with Termux's terminal-emulator and terminal-view
+  (https://github.com/termux/termux-app) and Termux:API
+  (https://github.com/termux/termux-api), and parts of it follow their
+  code (the key handling, the extra keys, the RUN_COMMAND and am socket
+  protocols, the compat classes in app/termux-shared-compat).
+  app/termux-api-patches modify Termux:API. Like Termux, app/ is licensed
+  under the GNU General Public License v3.0.

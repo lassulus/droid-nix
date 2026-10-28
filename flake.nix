@@ -1,10 +1,11 @@
 {
-  description = "droid-nix: a Termux-based terminal app with Nix for Android";
+  description = "droid-nix: a terminal app with Nix for Android";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Upstream termux-app; app/patches is applied on top of it.
+    # Upstream termux-app, of which the app uses terminal-emulator and
+    # terminal-view, unpatched.
     termux-app = {
       url = "github:termux/termux-app/8629e632fcb95da272221be327db653fb24befe9";
       flake = false;
