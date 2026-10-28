@@ -51,14 +51,12 @@ in
         fi
       '';
 
+      # A link to this generation's login-inner, replaced atomically: running
+      # sessions keep reading the file they opened, the next one gets this.
       installLoginInner = ''
-        if (test -e /usr/lib/.login-inner.new && ! diff /usr/lib/.login-inner.new ${loginInner} > /dev/null) || \
-            (! test -e /usr/lib/.login-inner.new && ! diff /usr/lib/login-inner ${loginInner} > /dev/null); then
-          mkdir --parents /usr/lib
-          cp ${loginInner} /usr/lib/.login-inner.tmp
-          chmod u+w /usr/lib/.login-inner.tmp
-          mv /usr/lib/.login-inner.tmp /usr/lib/.login-inner.new
-        fi
+        mkdir --parents /usr/lib
+        ln --symbolic --force ${loginInner} /usr/lib/.login-inner.tmp
+        mv /usr/lib/.login-inner.tmp /usr/lib/login-inner
       '';
     };
 

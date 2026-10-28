@@ -48,7 +48,7 @@ let
 
       _module.args = { inherit initialPackageInfo; };
 
-      # login-inner execs bash from the first generation instead.
+      # login-inner execs the first generation's login-inner instead.
       user.shell = "${initialPackageInfo.busybox}/bin/sh";
 
       build.flake.droid-nix = urlOptionValue droidNixFlakeURL "DROID_NIX_FLAKE_URL";
