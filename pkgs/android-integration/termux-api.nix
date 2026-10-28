@@ -17,11 +17,7 @@ stdenv.mkDerivation rec {
   cmakeFlags = [ "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" ];
 
   postPatch = ''
-    # Android's app seccomp filter traps accept (bionic only uses accept4)
-    # and the launcher fails it with ENOSYS.
     substituteInPlace termux-api.c \
-      --replace-fail '= accept(' '= accept4(' \
-      --replace-fail '&addrlen);' '&addrlen, 0);' \
       --replace-fail '"/data/data/com.termux/files/usr"' "\"$out\"" \
       --replace-fail 'execv(PREFIX "/bin/am"' 'execv("${termux-am}/bin/am"' \
       --replace-fail '"com.termux.api/.TermuxApiReceiver"' \

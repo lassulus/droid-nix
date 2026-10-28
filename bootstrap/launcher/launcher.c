@@ -40,8 +40,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -1082,12 +1082,8 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 
 	// One path at arg0, relative to the cwd.
 	case SYS_chdir:
-	case SYS_chroot:
 	case SYS_truncate:
 	case SYS_statfs:
-	case SYS_acct:
-	case SYS_swapon:
-	case SYS_swapoff:
 	case SYS_getxattr:
 	case SYS_setxattr:
 	case SYS_listxattr:
@@ -1099,9 +1095,6 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 	case SYS_llistxattr:
 	case SYS_lremovexattr:
 		FIX(-1, 0, 0, b1);
-		break;
-	case SYS_umount2:
-		FIX(-1, 0, !(r[1] & 0x8 /* UMOUNT_NOFOLLOW */), b1);
 		break;
 
 	// Paths elsewhere.
@@ -1119,13 +1112,6 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 	case SYS_fsconfig:  // (fd, cmd, key, value, aux)
 		if (r[1] == 3 /* FSCONFIG_SET_PATH */ || r[1] == 4 /* _SET_PATH_EMPTY */)
 			FIX(4, 3, 1, b1);
-		break;
-	case SYS_mount:  // (source, target, type, flags, data)
-		// The source is a path only for bind and move mounts; otherwise
-		// its meaning belongs to the filesystem type and it is left as is.
-		if (r[3] & (MS_BIND | MS_MOVE))
-			FIX(-1, 0, 1, b1);
-		FIX(-1, 1, 1, b2);
 		break;
 	case SYS_pivot_root:
 		FIX(-1, 0, 1, b1);
@@ -1386,14 +1372,33 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		return;
 	}
 
+	// Every other syscall is not one we translate, so our own filter did
+	// not trap it: it reached us only because Android's app seccomp filter
+	// traps it with SECCOMP_RET_TRAP (not in bionic's SYSCALLS.TXT, or in
+	// SECCOMP_BLOCKLIST_APP.TXT). Reissuing it would trap again while
+	// SIGSYS is masked and kill the process. As proot-termux's
+	// handle_seccomp_event does, the ones with an allowed equivalent run as
+	// that, and the rest fail with ENOSYS (glibc/musl tolerate that for
+	// set_robust_list, rseq, ... as on kernels without them).
+	case SYS_accept:  // bionic only uses accept4
+		r[0] = (unsigned long)SYS4(SYS_accept4, r[0], r[1], r[2], 0);
+		return;
+	// Changes of the ids: those that change nothing succeed.
+	case SYS_setgroups:
+		r[0] = 0;
+		return;
+	case SYS_setresuid:
+	case SYS_setresgid: {
+		uint32_t id[3];
+		long e = 0;
+		SYS3(nr == SYS_setresuid ? SYS_getresuid : SYS_getresgid, &id[0], &id[1], &id[2]);
+		for (int i = 0; i < 3; i++)
+			if ((uint32_t)r[i] != (uint32_t)-1 && (uint32_t)r[i] != id[i])
+				e = -EPERM;
+		r[0] = (unsigned long)e;
+		return;
+	}
 	default:
-		// This syscall is not one we translate, so our own filter did not
-		// trap it: it reached us only because Android's app seccomp filter
-		// traps it with SECCOMP_RET_TRAP (e.g. set_robust_list, rseq).
-		// Reissuing it would trap again against Android's filter while
-		// SIGSYS is masked and kill the process, so we emulate proot and
-		// fail it with -ENOSYS. glibc/musl tolerate these the same way
-		// they do under proot (and on kernels without the syscall).
 		r[0] = (unsigned long)-ENOSYS;
 		return;
 	}
@@ -1424,18 +1429,20 @@ static void unblock_sigsys(void)
 // traced_ioctls).
 // Not handled (documented in RESULTS.md): unix datagram destinations in
 // sendto/sendmsg/sendmmsg, paths inside bpf() attrs, and the removed,
-// privileged lookup_dcookie. Everything else is left untrapped.
+// privileged lookup_dcookie. Everything else is left untrapped. Android's
+// filter traps mount, umount2, chroot, acct, swapon and swapoff for apps
+// (SECCOMP_BLOCKLIST_APP.TXT), so they are not translated: they fail with
+// ENOSYS (see the handler's default).
 static const int traced[] = {
 	SYS_setxattr,     SYS_lsetxattr,      SYS_getxattr,       SYS_lgetxattr,
 	SYS_listxattr,    SYS_llistxattr,     SYS_removexattr,    SYS_lremovexattr,
 	SYS_getcwd,       SYS_inotify_add_watch, SYS_mknodat,     SYS_mkdirat,
 	SYS_unlinkat,     SYS_symlinkat,      SYS_linkat,         SYS_renameat,
-	SYS_umount2,      SYS_mount,          SYS_pivot_root,     SYS_statfs,
-	SYS_truncate,     SYS_faccessat,      SYS_chdir,          SYS_chroot,
-	SYS_fchmodat,     SYS_fchownat,       SYS_openat,         SYS_quotactl,
-	SYS_readlinkat,   SYS_newfstatat,     SYS_utimensat,      SYS_acct,
-	SYS_bind,         SYS_connect,        SYS_execve,         SYS_swapon,
-	SYS_swapoff,      SYS_fanotify_mark,  SYS_name_to_handle_at, SYS_renameat2,
+	SYS_pivot_root,   SYS_statfs,         SYS_truncate,       SYS_faccessat,
+	SYS_chdir,        SYS_fchmodat,       SYS_fchownat,       SYS_openat,
+	SYS_quotactl,     SYS_readlinkat,     SYS_newfstatat,     SYS_utimensat,
+	SYS_bind,         SYS_connect,        SYS_execve,
+	SYS_fanotify_mark, SYS_name_to_handle_at, SYS_renameat2,
 	SYS_execveat,     SYS_statx,          SYS_open_tree,      SYS_move_mount,
 	SYS_fsconfig,     SYS_fspick,         SYS_openat2,        SYS_faccessat2,
 	SYS_mount_setattr, SYS_fchmodat2,     SYS_setxattrat,     SYS_getxattrat,

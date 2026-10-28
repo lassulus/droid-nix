@@ -125,7 +125,8 @@ in nix's tarball cache) leave such files there.
 
 Known differences from proot:
 
-- no `--sysvipc` emulation;
+- no `--sysvipc` emulation; `mount` and `umount` fail with ENOSYS, as
+  Android denies them to apps (proot emulates bind mounts);
 - the first hard link of a file needs write access to its directory (it is
   moved), so `nix store optimise` fails on the read-only store, as under
   proot; linking an fd (`AT_EMPTY_PATH`, `/proc/self/fd/N`) is not
