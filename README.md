@@ -131,8 +131,7 @@ Known differences from proot:
   moved), so `nix store optimise` fails on the read-only store, as under
   proot; linking an fd (`AT_EMPTY_PATH`, `/proc/self/fd/N`) is not
   emulated; `/proc/self/fd/N` of a file opened through a hard link shows its
-  path in the link store; two processes linking or unlinking the same file
-  at once can miscount;
+  path in the link store;
 - a program that installs its own SIGSYS handler conflicts with the
   launcher's;
 - `ps` shows `liblauncher.so` as the name and the launcher's command line
