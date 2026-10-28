@@ -1,7 +1,6 @@
 package us.lassul.droidnix;
 
 import android.app.Notification;
-import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
@@ -9,6 +8,7 @@ import android.content.Intent;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -20,7 +20,9 @@ import com.termux.terminal.TerminalSessionClient;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Keeps the terminal sessions running while the activity is gone, as a
@@ -37,10 +39,14 @@ public final class TerminalService extends Service {
     static final String EXTRA_ARGUMENTS = "us.lassul.droidnix.execute.arguments";
     static final String EXTRA_WORKDIR = "us.lassul.droidnix.execute.cwd";
     static final String EXTRA_STDIN = "us.lassul.droidnix.execute.stdin";
+    static final String EXTRA_RUNNER = "us.lassul.droidnix.execute.runner";
+    static final String EXTRA_BACKGROUND = "us.lassul.droidnix.execute.background";
+    static final String EXTRA_SESSION_ACTION = "us.lassul.droidnix.execute.session_action";
     static final String EXTRA_PENDING_INTENT = "pendingIntent";
 
     private static final int NOTIFICATION_ID = 1;
-    private static final String CHANNEL = "sessions";
+    /** The services' notification channel (App). */
+    static final String CHANNEL = "sessions";
 
     final List<TerminalSession> sessions = new ArrayList<>();
     /** The session the activity shows. */
@@ -50,6 +56,8 @@ public final class TerminalService extends Service {
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
     private int backgroundCommands;
+    /** Where the sessions that commands started send their results. */
+    private final Map<TerminalSession, PendingIntent> results = new HashMap<>();
 
     final class Binder extends android.os.Binder {
         TerminalService service() {
@@ -58,14 +66,9 @@ public final class TerminalService extends Service {
     }
 
     @Override
-    public void onCreate() {
-        getSystemService(NotificationManager.class).createNotificationChannel(
-            new NotificationChannel(CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW));
-        startForeground(NOTIFICATION_ID, notification());
-    }
-
-    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Also for every startForegroundService (RunCommandService).
+        startForeground(NOTIFICATION_ID, notification());
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_STOP.equals(action)) {
             if (activity != null) activity.finish();
@@ -83,18 +86,59 @@ public final class TerminalService extends Service {
     }
 
     /**
-     * Runs the executable in the intent's data (scheme us.lassul.droidnix.file)
-     * in the background: Termux:API's notification actions and jobs.
+     * Runs the executable in the intent's data (scheme us.lassul.droidnix.file):
+     * Termux:API's notification actions and jobs, and RUN_COMMAND. The runner
+     * "app-shell" runs it in the background, "terminal-session" in a new
+     * session; without one, the extra "background" chooses.
      */
     private void execute(Intent intent) {
         String[] arguments = intent.getStringArrayExtra(EXTRA_ARGUMENTS);
         String[] command = Shell.command(intent.getData().getPath(), arguments != null ? arguments : new String[0]);
+        String workingDirectory = intent.getStringExtra(EXTRA_WORKDIR);
+        PendingIntent pendingIntent = intent.getParcelableExtra(EXTRA_PENDING_INTENT);
+        String runner = intent.getStringExtra(EXTRA_RUNNER);
+        if (runner == null) runner = intent.getBooleanExtra(EXTRA_BACKGROUND, false) ? "app-shell" : "terminal-session";
+
+        if (runner.equals("terminal-session")) {
+            TerminalSession session = addSession(command, workingDirectory, false);
+            if (pendingIntent != null) results.put(session, pendingIntent);
+            // 0: show the new session and open the activity, 1: open it, 2: show it, 3: neither.
+            int sessionAction = Integer.parseInt(intent.getStringExtra(EXTRA_SESSION_ACTION) != null
+                ? intent.getStringExtra(EXTRA_SESSION_ACTION) : "0");
+            if (sessionAction == 0 || sessionAction == 2) {
+                current = session;
+                if (activity != null) activity.showSession(session);
+            }
+            if (sessionAction == 0 || sessionAction == 1) {
+                try {
+                    startActivity(new Intent(this, TerminalActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (RuntimeException e) {
+                    Log.w("droid-nix", "cannot open the terminal", e);
+                }
+            }
+            return;
+        }
         backgroundCommands++;
-        BackgroundCommand.start(this, command, intent.getStringExtra(EXTRA_WORKDIR), intent.getStringExtra(EXTRA_STDIN),
-            (PendingIntent) intent.getParcelableExtra(EXTRA_PENDING_INTENT), () -> new Handler(getMainLooper()).post(() -> {
+        BackgroundCommand.start(this, command, workingDirectory, intent.getStringExtra(EXTRA_STDIN), pendingIntent,
+            () -> new Handler(getMainLooper()).post(() -> {
                 backgroundCommands--;
                 stopIfIdle();
             }));
+    }
+
+    /** Sends the result of a session that a command started: its transcript and exit code. */
+    void sessionFinished(TerminalSession session) {
+        PendingIntent pendingIntent = results.remove(session);
+        if (pendingIntent == null) return;
+        Bundle result = new Bundle();
+        result.putString("stdout", session.getEmulator() != null ? session.getEmulator().getScreen().getTranscriptText() : "");
+        result.putInt("exitCode", session.getExitStatus());
+        result.putInt("err", -1);
+        try {
+            pendingIntent.send(this, 0, new Intent().putExtra("result", result));
+        } catch (PendingIntent.CanceledException e) {
+            Log.w("droid-nix", "the caller's PendingIntent was canceled", e);
+        }
     }
 
     /** Stops the service when nothing runs in it and no activity shows it. */
@@ -151,21 +195,26 @@ public final class TerminalService extends Service {
     }
 
     private TerminalSessionClient client() {
-        return activity != null ? activity.client : DETACHED;
+        return activity != null ? activity.client : detached;
     }
 
     /** A new session with the login, or the failsafe shell: Android's /system/bin/sh. */
     TerminalSession addSession(boolean failsafe) {
-        String[] command = failsafe ? new String[]{"/system/bin/sh"} : Shell.login(this);
+        TerminalSession session = addSession(failsafe ? new String[]{"/system/bin/sh"} : Shell.login(this), null, failsafe);
+        if (failsafe) session.mSessionName = getString(R.string.failsafe);
+        return session;
+    }
+
+    private TerminalSession addSession(String[] command, String workingDirectory, boolean failsafe) {
         Integer transcriptRows;
         try {
             transcriptRows = new Props(this).getInteger("terminal-transcript-rows");
         } catch (IOException e) {
             transcriptRows = null;
         }
-        TerminalSession session = new TerminalSession(command[0], Shell.home(this).getPath(), command,
+        TerminalSession session = new TerminalSession(command[0],
+            workingDirectory != null ? workingDirectory : Shell.home(this).getPath(), command,
             Shell.environment(this, failsafe), transcriptRows, client());
-        if (failsafe) session.mSessionName = getString(R.string.failsafe);
         sessions.add(session);
         updateNotification();
         return session;
@@ -207,10 +256,10 @@ public final class TerminalService extends Service {
     }
 
     /** The sessions' client while no activity is bound. */
-    private static final TerminalSessionClient DETACHED = new TerminalSessionClient() {
+    private final TerminalSessionClient detached = new TerminalSessionClient() {
         @Override public void onTextChanged(TerminalSession session) { }
         @Override public void onTitleChanged(TerminalSession session) { }
-        @Override public void onSessionFinished(TerminalSession session) { }
+        @Override public void onSessionFinished(TerminalSession session) { sessionFinished(session); }
         @Override public void onCopyTextToClipboard(TerminalSession session, String text) { }
         @Override public void onPasteTextFromClipboard(TerminalSession session) { }
         @Override public void onBell(TerminalSession session) { }

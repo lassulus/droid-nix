@@ -239,6 +239,7 @@ final class TerminalClient implements TerminalViewClient, TerminalSessionClient 
 
     @Override
     public void onSessionFinished(TerminalSession session) {
+        activity.service.sessionFinished(session);
         activity.updateSessionList();
     }
 

@@ -12,6 +12,15 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- RUN_COMMAND: opening the terminal for a new session from the background. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <permission
+        android:name="us.lassul.droidnix.permission.RUN_COMMAND"
+        android:description="@string/run_command_permission_description"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/run_command_permission_label"
+        android:protectionLevel="dangerous" />
 
     <!-- Termux:API; the runtime permissions are asked for by the commands that need them. -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
@@ -91,6 +100,19 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Terminal sessions that keep running the user's commands" />
+        </service>
+
+        <service
+            android:name=".RunCommandService"
+            android:exported="true"
+            android:foregroundServiceType="specialUse"
+            android:permission="us.lassul.droidnix.permission.RUN_COMMAND">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Passes commands from other apps (RUN_COMMAND) to the terminal service" />
+            <intent-filter>
+                <action android:name="us.lassul.droidnix.RUN_COMMAND" />
+            </intent-filter>
         </service>
 
         <receiver
