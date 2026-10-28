@@ -16,18 +16,21 @@ stdenv.mkDerivation rec {
     sha256 = "sha256-6pCv2HMBRp8Hi56b43mQqnaFaI7y5DfhS9gScANwg2I=";
   };
   nativeBuildInputs = [ cmake ];
-  patchPhase = ''
+  patches = [ ./termux-am.patch ];
+  postPatch = ''
     # Header generation doesn't seem to work on android
     echo "#define SOCKET_PATH \"${socketPath}\"" > termux-am.h
-    # Fix the bash link so that nix can patch it + path to termux-am-socket
+    # Fix the bash link so that nix can patch it + path to droid-nix-am-socket
     substituteInPlace termux-am.sh.in \
       --replace-quiet @TERMUX_PREFIX@/bin/bash /bin/bash \
       --replace-quiet \
         "termux-am-socket \"\$am_command_string\"" \
-        "$out/bin/termux-am-socket \"\$am_command_string\""
+        "$out/bin/droid-nix-am-socket \"\$am_command_string\""
   '';
   postInstall = ''
+    mv $out/bin/termux-am $out/bin/droid-nix-am
+    mv $out/bin/termux-am-socket $out/bin/droid-nix-am-socket
     # Scripts use 'am' as an alias.
-    ln -s $out/bin/termux-am $out/bin/am
+    ln -s $out/bin/droid-nix-am $out/bin/am
   '';
 }

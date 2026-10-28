@@ -1,0 +1,106 @@
+scripts: droid-nix names in the help texts
+
+The installed names are changed in termux-tools.nix.
+
+diff --git a/scripts/termux-backup.in b/scripts/termux-backup.in
+index 99c4735..a830251 100644
+--- a/scripts/termux-backup.in
++++ b/scripts/termux-backup.in
+@@ -39,7 +39,7 @@ msg() {
+ 
+ show_usage() {
+ 	msg
+-	msg "Usage: termux-backup [options] [output file]"
++	msg "Usage: droid-nix-backup [options] [output file]"
+ 	msg
+ 	msg "Script for backing up Termux installation directory, \$PREFIX."
+ 	msg "It WILL NOT backup your home directory."
+diff --git a/scripts/termux-open-url.in b/scripts/termux-open-url.in
+index 093350e..688b9c6 100644
+--- a/scripts/termux-open-url.in
++++ b/scripts/termux-open-url.in
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ 
+ if [ $# != 1 ] && [ $# != 2 ]; then
+-	echo 'usage: termux-open-url <url> [app_package_or_component]'
++	echo 'usage: droid-nix-open-url <url> [app_package_or_component]'
+ 	echo 'Open an URL for viewing.'
+ 	exit 1
+ fi
+diff --git a/scripts/termux-open.in b/scripts/termux-open.in
+index 9c81630..cd3e31a 100644
+--- a/scripts/termux-open.in
++++ b/scripts/termux-open.in
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ set -e -u
+ 
+-SCRIPTNAME=termux-open
++SCRIPTNAME=droid-nix-open
+ show_usage () {
+     echo "Usage: $SCRIPTNAME [options] path-or-url"
+     echo "Open a file or URL in an external app."
+diff --git a/scripts/termux-reload-settings.in b/scripts/termux-reload-settings.in
+index 4e71f8a..05b424e 100644
+--- a/scripts/termux-reload-settings.in
++++ b/scripts/termux-reload-settings.in
+@@ -1,11 +1,11 @@
+ #!/bin/sh
+ 
+ if [ "$#" != "0" ]; then
+-	echo 'usage: termux-reload-settings'
++	echo 'usage: droid-nix-reload-settings'
+ 	echo 'Use without arguments to reload settings after modifying any of:'
+-	echo '  ~/.termux/colors.properties'
+-	echo '  ~/.termux/font.ttf '
+-	echo '  ~/.termux/termux.properties'
++	echo '  ~/.droid-nix/colors.properties'
++	echo '  ~/.droid-nix/font.ttf '
++	echo '  ~/.droid-nix/droid-nix.properties'
+ 	exit
+ fi
+ 
+diff --git a/scripts/termux-setup-storage.in b/scripts/termux-setup-storage.in
+index c621234..ea31a73 100644
+--- a/scripts/termux-setup-storage.in
++++ b/scripts/termux-setup-storage.in
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ 
+ if [ "$#" != "0" ]; then
+-	echo 'usage: termux-setup-storage'
++	echo 'usage: droid-nix-setup-storage'
+ 	echo 'Use without arguments to ensure storage permission granted'
+ 	echo 'and symlinks to storage available in $HOME/storage'
+ 	exit
+diff --git a/scripts/termux-wake-lock.in b/scripts/termux-wake-lock.in
+index ba4b899..c3a51e6 100644
+--- a/scripts/termux-wake-lock.in
++++ b/scripts/termux-wake-lock.in
+@@ -1,8 +1,8 @@
+ #!/bin/sh
+ 
+ if [ $# != 0 ]; then
+-	echo 'usage: termux-wake-lock'
+-	echo 'Acquire the Termux wake lock to prevent the CPU from sleeping.'
++	echo 'usage: droid-nix-wake-lock'
++	echo 'Acquire the droid-nix wake lock to prevent the CPU from sleeping.'
+ 	exit 1
+ fi
+ 
+diff --git a/scripts/termux-wake-unlock.in b/scripts/termux-wake-unlock.in
+index a4b1f57..64e7c35 100644
+--- a/scripts/termux-wake-unlock.in
++++ b/scripts/termux-wake-unlock.in
+@@ -1,8 +1,8 @@
+ #!/bin/sh
+ 
+ if [ $# != 0 ]; then
+-	echo 'usage: termux-wake-unlock'
+-	echo 'Release the Termux wake lock to allow the CPU to sleep.'
++	echo 'usage: droid-nix-wake-unlock'
++	echo 'Release the droid-nix wake lock to allow the CPU to sleep.'
+ 	exit 1
+ fi
+ 

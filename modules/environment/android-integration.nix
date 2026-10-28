@@ -29,83 +29,83 @@ in
       description = ''
         Provide an `am` (activity manager) command.
         Is not guaranteed to be a real deal, could be of limited compatibility
-        with real `am` (like `termux-am`).
+        with real `am` (also installed as `droid-nix-am`).
       '';
     };
 
-    termux-api.enable = lib.mkOption {
+    api.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide the Termux:API commands
-        (`termux-notification`, `termux-location`, `termux-clipboard-get`, ...)
+        Provide the Termux:API commands as
+        `droid-nix-notification`, `droid-nix-location`, `droid-nix-clipboard-get`, ...
         that use Android APIs through the droid-nix app.
       '';
     };
 
-    termux-open.enable = lib.mkOption {
+    open.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide a `termux-open` command
+        Provide a `droid-nix-open` command
         that opens files or urls in external apps
         (through the droid-nix app).
       '';
     };
 
-    termux-open-url.enable = lib.mkOption {
+    open-url.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide a `termux-open-url` command
+        Provide a `droid-nix-open-url` command
         that opens files or urls in external apps
         (uses `android.intent.action.VIEW`).
       '';
     };
 
-    termux-setup-storage.enable = lib.mkOption {
+    setup-storage.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide a `termux-setup-storage` command
+        Provide a `droid-nix-setup-storage` command
         that makes the app request storage permission,
         and then creates a $HOME/storage directory with symlinks to storage.
       '';
     };
 
-    termux-reload-settings.enable = lib.mkOption {
+    reload-settings.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide a `termux-reload-settings` command
+        Provide a `droid-nix-reload-settings` command
         which applies changes to font, colorscheme or terminal
         without the need to close all the sessions.
       '';
     };
 
-    termux-wake-lock.enable = lib.mkOption {
+    wake-lock.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide a `termux-wake-lock` command
+        Provide a `droid-nix-wake-lock` command
         that tones down Android power saving measures.
         This is the same action that's available from the notification.
       '';
     };
 
-    termux-wake-unlock.enable = lib.mkOption {
+    wake-unlock.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       example = "true";
       description = ''
-        Provide a `termux-wake-unlock` command
-        that undoes the effect of the `termux-wake-lock` one.
+        Provide a `droid-nix-wake-unlock` command
+        that undoes the effect of the `droid-nix-wake-lock` one.
       '';
     };
 
@@ -114,7 +114,7 @@ in
       default = false;
       example = "true";
       description = ''
-        Acquire the wake lock (like `termux-wake-lock`) at every login and
+        Acquire the wake lock (like `droid-nix-wake-lock`) at every login and
         switch, so that programs keep running with the screen off.
         `services.sshd` turns this on by default.
       '';
@@ -125,7 +125,7 @@ in
       default = false;
       example = "true";
       description = ''
-        Provide an `xdg-open` alias to `termux-open` command.
+        Provide an `xdg-open` alias to `droid-nix-open` command.
       '';
     };
 
@@ -146,18 +146,18 @@ in
   config = let ifD = cond: pkg: if cond then [ pkg ] else [ ]; in {
     environment.packages =
       (ifD cfg.am.enable termux-am) ++
-      (ifD cfg.termux-api.enable termux-api) ++
-      (ifD cfg.termux-setup-storage.enable termux-tools.setup_storage) ++
-      (ifD cfg.termux-open.enable termux-tools.open) ++
-      (ifD cfg.termux-open-url.enable termux-tools.open_url) ++
-      (ifD cfg.termux-reload-settings.enable termux-tools.reload_settings) ++
-      (ifD cfg.termux-wake-lock.enable termux-tools.wake_lock) ++
-      (ifD cfg.termux-wake-unlock.enable termux-tools.wake_unlock) ++
+      (ifD cfg.api.enable termux-api) ++
+      (ifD cfg.setup-storage.enable termux-tools.setup_storage) ++
+      (ifD cfg.open.enable termux-tools.open) ++
+      (ifD cfg.open-url.enable termux-tools.open_url) ++
+      (ifD cfg.reload-settings.enable termux-tools.reload_settings) ++
+      (ifD cfg.wake-lock.enable termux-tools.wake_lock) ++
+      (ifD cfg.wake-unlock.enable termux-tools.wake_unlock) ++
       (ifD cfg.xdg-open.enable termux-tools.xdg_open) ++
       (ifD cfg.unsupported.enable termux-tools.out);
 
     environment.loginHook = lib.mkIf cfg.wakeLock.enable ''
-      ${termux-tools.wake_lock}/bin/termux-wake-lock || true
+      ${termux-tools.wake_lock}/bin/droid-nix-wake-lock || true
     '';
   };
 }

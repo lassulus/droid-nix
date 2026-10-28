@@ -1,6 +1,7 @@
-# The Termux:API commands (termux-notification, termux-location, ...): the
-# termux-api helper broadcasts each call through termux-am to the receiver
-# that the droid-nix app carries (app/termux-api-patches).
+# The Termux:API commands, installed as droid-nix-notification,
+# droid-nix-location, ...: the droid-nix-api helper broadcasts each call
+# through droid-nix-am to the receiver that the droid-nix app carries
+# (app/termux-api-patches).
 { stdenv, fetchFromGitHub, cmake, getopt, gnused, termux-am, androidApp }:
 
 stdenv.mkDerivation rec {
@@ -17,6 +18,17 @@ stdenv.mkDerivation rec {
   cmakeFlags = [ "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" ];
 
   postPatch = ''
+    # The droid-nix-* names, before the store paths below go in: the
+    # scripts' help texts, the calls of each other and of the libexec
+    # helpers (renamed in postInstall), and termux-usb's environment
+    # variables.
+    sed -i 's|termux-|droid-nix-|g' scripts/*.in
+    substituteInPlace termux-api.c --replace-fail termux-callback droid-nix-callback
+    substituteInPlace termux-api.c termux-callback.in scripts/termux-usb.in \
+      --replace-quiet TERMUX_CALLBACK DROID_NIX_CALLBACK \
+      --replace-quiet TERMUX_EXPORT_FD DROID_NIX_EXPORT_FD \
+      --replace-quiet TERMUX_USB_FD DROID_NIX_USB_FD
+
     substituteInPlace termux-api.c \
       --replace-fail '"/data/data/com.termux/files/usr"' "\"$out\"" \
       --replace-fail 'execv(PREFIX "/bin/am"' 'execv("${termux-am}/bin/am"' \
@@ -34,5 +46,16 @@ stdenv.mkDerivation rec {
       --replace-fail '        sed \' '        ${gnused}/bin/sed \'
     # patchShebangs points these to the store
     sed -i 's|^#!@TERMUX_PREFIX@/bin/|#!/bin/|' scripts/*.in termux-callback.in
+  '';
+
+  postInstall = ''
+    for f in $out/bin/termux-*; do
+      mv $f $out/bin/droid-nix-''${f#$out/bin/termux-}
+    done
+    mv $out/libexec/termux-api-broadcast $out/libexec/droid-nix-api
+    mv $out/libexec/termux-callback $out/libexec/droid-nix-callback
+    rm $out/libexec/termux-api
+    # The C library of the helper; nothing in droid-nix links it.
+    rm -r $out/lib $out/include
   '';
 }

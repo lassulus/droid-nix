@@ -14,7 +14,7 @@ if Android asks.
 The first start needs a network connection and downloads about 200 MB. It
 creates your configuration from a template, builds it and ends at a shell
 prompt. Allow notifications if you want the session notification and
-`termux-notification`.
+`droid-nix-notification`.
 
 The default configuration has bash, coreutils, `less`, `vim`, `nix` and the
 `droid-nix` command. To add more, see [packages.md](packages.md).
@@ -46,10 +46,10 @@ droid-nix switch
 To use the phone's shared storage (Downloads, DCIM, ...), add:
 
 ```nix
-  android-integration.termux-setup-storage.enable = true;
+  android-integration.setup-storage.enable = true;
 ```
 
-switch and run `termux-setup-storage`. Android opens "All files access"
+switch and run `droid-nix-setup-storage`. Android opens "All files access"
 for droid-nix: turn on **Allow access to manage all files** and go back.
 `~/storage` then has links such as `shared` (the whole storage),
 `downloads`, `dcim` and `pictures`.
