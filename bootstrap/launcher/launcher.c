@@ -687,7 +687,7 @@ static void l2s_drop(const char *f)
 // counts it down. The name is looked up again under the lock and removed
 // with it held, so two threads that remove or replace the same name at once
 // count it down once. Returns the result.
-static long l2s_unlink(unsigned long *r)
+static __attribute__((noinline)) long l2s_unlink(unsigned long *r)
 {
 	char f[PATHBUF];
 	long d = (long)(int)r[0];
@@ -784,7 +784,7 @@ static long l2s_link_locked(long od, const char *op, long nd, const char *np)
 
 // linkat on canonical paths: (od, op) the existing file, (nd, np) the new
 // name. Returns 0 or -errno.
-static long l2s_link(long od, const char *op, long nd, const char *np)
+static __attribute__((noinline)) long l2s_link(long od, const char *op, long nd, const char *np)
 {
 	long lk = l2s_lock();
 	if (lk < 0)
@@ -797,7 +797,7 @@ static long l2s_link(long od, const char *op, long nd, const char *np)
 // renameat(2) on canonical paths: renaming over a name of a hard-linked file
 // counts it down, under the lock as in l2s_unlink; renaming one name of a
 // file onto another is a no-op, as for hard links. Returns the result.
-static long l2s_rename(unsigned long *r, long nr)
+static __attribute__((noinline)) long l2s_rename(unsigned long *r, long nr)
 {
 	char f[PATHBUF], o[PATHBUF];
 	long nd = (long)(int)r[2];
@@ -1052,12 +1052,41 @@ static int fix_sockaddr(unsigned long *r, int follow, char *buf, char *sabuf)
 	return 0;
 }
 
+// execveat(dirfd, path, argv, envp, flags): turn (dirfd, path) into an
+// absolute guest path, since the dirfd may not survive the re-exec.
+static __attribute__((noinline)) long execveat_reexec(unsigned long *r)
+{
+	char b1[PATHBUF], b2[PATHBUF];
+	const char *path = (const char *)r[1];
+	int flags = (int)r[4];
+	if (!path || (!*path && !(flags & AT_EMPTY_PATH)))
+		return path ? -ENOENT : -EFAULT;
+	if (flags & AT_SYMLINK_NOFOLLOW) {
+		const char *h;
+		long e = canon((long)(int)r[0], path, 0, b1, &h);
+		if (e < 0)
+			return e;
+		char one;
+		if (SYS4(SYS_readlinkat, (long)(int)r[0], h, &one, 1) >= 0)
+			return -ELOOP;
+	}
+	long e = guest_abs((long)(int)r[0], path, b2, &path);
+	if (e < 0)
+		return e;
+	return reexec(path, (char **)r[2], (char **)r[3]);
+}
+
+static void handle(unsigned long *r, long nr, void *ctx);
+
+// execve(at) is handled here, on as little stack as possible: glibc's
+// posix_spawn child (a clone that shares the parent's memory) runs on a
+// 36 KiB stack, and overflowing it corrupts the parent. Everything else
+// goes to handle, with its buffers.
 static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 {
 	(void)sig;
 	unsigned long *r = ((ucontext_t *)ctx)->uc_mcontext.regs;
 	long nr = si->si_syscall;
-	char b1[PATHBUF], b2[PATHBUF];
 
 	if (g_debug) {
 		out(2, "[pid ");
@@ -1072,6 +1101,20 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 		outn(2, (long)r[2]);
 		out(2, "\n");
 	}
+
+	// The new image is started by re-exec'ing the loader with the guest
+	// target path; it canonicalises the path itself against the same cwd.
+	if (nr == SYS_execve)
+		r[0] = (unsigned long)reexec((const char *)r[0], (char **)r[1], (char **)r[2]);
+	else if (nr == SYS_execveat)
+		r[0] = (unsigned long)execveat_reexec(r);
+	else
+		handle(r, nr, ctx);
+}
+
+static __attribute__((noinline)) void handle(unsigned long *r, long nr, void *ctx)
+{
+	char b1[PATHBUF], b2[PATHBUF];
 
 	switch (nr) {
 	// One path at arg1 with its dirfd at arg0. The final component is
@@ -1409,43 +1452,6 @@ static void sigsys_handler(int sig, siginfo_t *si, void *ctx)
 	case SYS_clone3:
 		r[0] = (unsigned long)-ENOSYS;
 		return;
-
-	// The new image is started by re-exec'ing the loader with the guest
-	// target path; it canonicalises the path itself against the same cwd.
-	case SYS_execve:
-		r[0] = (unsigned long)reexec((const char *)r[0], (char **)r[1], (char **)r[2]);
-		return;
-
-	// execveat(dirfd, path, argv, envp, flags): turn (dirfd, path) into an
-	// absolute guest path, since the dirfd may not survive the re-exec.
-	case SYS_execveat: {
-		const char *path = (const char *)r[1];
-		int flags = (int)r[4];
-		if (!path || (!*path && !(flags & AT_EMPTY_PATH))) {
-			r[0] = (unsigned long)(path ? -ENOENT : -EFAULT);
-			return;
-		}
-		if (flags & AT_SYMLINK_NOFOLLOW) {
-			const char *h;
-			long e = canon((long)(int)r[0], path, 0, b1, &h);
-			if (e < 0) {
-				r[0] = (unsigned long)e;
-				return;
-			}
-			char one;
-			if (SYS4(SYS_readlinkat, (long)(int)r[0], h, &one, 1) >= 0) {
-				r[0] = (unsigned long)-ELOOP;
-				return;
-			}
-		}
-		long e = guest_abs((long)(int)r[0], path, b2, &path);
-		if (e < 0) {
-			r[0] = (unsigned long)e;
-			return;
-		}
-		r[0] = (unsigned long)reexec(path, (char **)r[2], (char **)r[3]);
-		return;
-	}
 
 	// Every other syscall is not one we translate, so our own filter did
 	// not trap it: it reached us only because Android's app seccomp filter
