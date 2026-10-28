@@ -1017,6 +1017,61 @@ static int fix(unsigned long *r, int da, int pa, int follow, char *buf)
 			return;                     \
 	} while (0)
 
+#define SUN_PATH 108  // sizeof sun_path
+static char g_sock[PATHBUF];  // host path of the socket directory links
+static size_t g_socklen;
+
+// A socket whose guest path fits sun_path but whose host path h does not
+// gets a short name through its directory, as proot binds such a socket to
+// a short host path: <g_sock>/<dev>.<ino> is a symlink to the directory, so
+// every process derives the same name for it, and getsockname reports one
+// that connect can use. Writes the short host path to out (PATHBUF) and
+// returns its length, or -errno. h is changed.
+static __attribute__((noinline)) long sock_short(char *h, char *out)
+{
+	char *name = h + zlen(h);
+	while (name[-1] != '/')
+		name--;
+	name[-1] = 0;
+	const char *dir = name - 1 == h ? "/" : h;
+	if (g_socklen + 44 >= SUN_PATH)  // "/<dev>.<ino>" fits in 43
+		return -ENAMETOOLONG;
+	struct stat st;
+	long e = SYS4(SYS_newfstatat, AT_FDCWD, dir, &st, 0);
+	if (e < 0)
+		return e;
+	size_t n = g_socklen;
+	memcpy(out, g_sock, n);
+	out[n++] = '/';
+	n += (size_t)utoa(st.st_dev, out + n);
+	out[n++] = '.';
+	n += (size_t)utoa(st.st_ino, out + n);
+	char cur[PATHBUF];
+	long cl = SYS4(SYS_readlinkat, AT_FDCWD, out, cur, PATHBUF - 1);
+	size_t dl = zlen(dir);
+	if (cl != (long)dl || memcmp(cur, dir, dl) != 0) {
+		// Missing, or left from a directory that had this inode before.
+		char t[PATHBUF];
+		memcpy(t, out, n);
+		t[n] = '.';
+		utoa((unsigned long)SYS0(SYS_gettid), t + n + 1);
+		SYS3(SYS_mkdirat, AT_FDCWD, g_sock, 0700);
+		e = SYS3(SYS_symlinkat, dir, AT_FDCWD, t);
+		if (e == 0)
+			e = SYS4(SYS_renameat, AT_FDCWD, t, AT_FDCWD, out);
+		if (e < 0) {
+			SYS3(SYS_unlinkat, AT_FDCWD, t, 0);
+			return e;
+		}
+	}
+	size_t nl = zlen(name);
+	if (n + 1 + nl >= SUN_PATH)
+		return -ENAMETOOLONG;
+	out[n++] = '/';
+	memcpy(out + n, name, nl + 1);
+	return (long)(n + nl);
+}
+
 // AF_UNIX socket path (bind creates it: no follow; connect follows).
 static int fix_sockaddr(unsigned long *r, int follow, char *buf, char *sabuf)
 {
@@ -1041,12 +1096,19 @@ static int fix_sockaddr(unsigned long *r, int follow, char *buf, char *sabuf)
 		return -1;
 	}
 	size_t rl = zlen(res);
-	if (rl >= 108) {  // sizeof sun_path
-		r[0] = (unsigned long)-ENAMETOOLONG;
-		return -1;
+	if (rl >= SUN_PATH) {
+		// The kernel's own error for a guest path that does not fit.
+		e = pl >= SUN_PATH || res != buf ? -ENAMETOOLONG : sock_short(buf, sabuf + 2);
+		if (e < 0) {
+			r[0] = (unsigned long)e;
+			return -1;
+		}
+		res = sabuf + 2;
+		rl = (size_t)e;
 	}
 	*(uint16_t *)sabuf = AF_UNIX;
-	memcpy(sabuf + 2, res, rl + 1);
+	if (res != sabuf + 2)
+		memcpy(sabuf + 2, res, rl + 1);
 	r[1] = (unsigned long)sabuf;
 	r[2] = 2 + rl + 1;
 	return 0;
@@ -1960,6 +2022,10 @@ int main(int argc, char **argv, char **envp)
 	if (ln < 0)
 		die("link store path too long");
 	g_l2slen = (size_t)ln;
+	ln = to_host("/tmp/.s", 7, g_sock);
+	if (ln < 0)
+		die("socket link directory path too long");
+	g_socklen = (size_t)ln;
 	argv += 2 * nb;
 	argc -= 2 * nb;
 	if (argc < 2)
