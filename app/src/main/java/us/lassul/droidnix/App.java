@@ -2,6 +2,8 @@ package us.lassul.droidnix;
 
 import android.app.Application;
 
+import com.termux.api.util.ResultReturner;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -26,6 +28,8 @@ public final class App extends Application {
         });
 
         AmServer.start(this);
+        // Termux:API sends its results with this context.
+        ResultReturner.setContext(this);
     }
 
 }

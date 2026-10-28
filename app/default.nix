@@ -1,5 +1,6 @@
 # Unsigned release APK of droid-nix: the app in this directory, built with
-# upstream termux-app's terminal-emulator and terminal-view.
+# upstream termux-app's terminal-emulator and terminal-view, and upstream
+# Termux:API with ./termux-api-patches.
 #
 # Update deps.json (needs network, run from the flake root):
 #   nix run .#update-deps
@@ -7,10 +8,12 @@
   lib,
   stdenv,
   runCommand,
+  applyPatches,
   gradle-packages,
   jdk17_headless,
   android,
   termux-app,
+  termux-api,
   bootstrapZip, # directory with bootstrap-aarch64.zip, see ../bootstrap
   launcher, # the static launcher, see ../bootstrap/launcher
 }:
@@ -32,6 +35,12 @@ let
       lib.optional (m != null) (lib.head m)
     ) (lib.splitString "\n" (builtins.readFile ./build.gradle))
   );
+
+  termuxApi = applyPatches {
+    name = "termux-api-patched";
+    src = termux-api;
+    patches = lib.sort (a: b: a < b) (lib.filesystem.listFilesRecursive ./termux-api-patches);
+  };
 
   # terminal-emulator's JNI part: the pty and the session's process.
   libtermux = runCommand "libtermux" { } ''
@@ -55,6 +64,8 @@ stdenv.mkDerivation (finalAttrs: {
       ./src
       ./terminal-emulator
       ./terminal-view
+      ./termux-api
+      ./termux-shared-compat
     ];
   };
 
@@ -82,6 +93,20 @@ stdenv.mkDerivation (finalAttrs: {
       cp -r --no-preserve=mode ${termux-app}/$module/src/main $module/src/main
     done
     rm -r terminal-emulator/src/main/jni
+    cp -r --no-preserve=mode ${termuxApi}/app/src termux-api/src
+    # Its manifest's components are in ours. Left out: its settings and main
+    # activity, and the application class with its socket listener.
+    rm -r termux-api/src/main/AndroidManifest.xml \
+      termux-api/src/main/java/com/termux/api/settings \
+      termux-api/src/main/java/com/termux/api/activities/TermuxAPIMainActivity.java \
+      termux-api/src/main/java/com/termux/api/TermuxAPIApplication.java \
+      termux-api/src/main/java/com/termux/api/SocketListener.java \
+      termux-api/src/main/res/layout/activity_termux_api_main.xml \
+      termux-api/src/main/res/layout/activity_termux_api_settings.xml \
+      termux-api/src/main/res/menu \
+      termux-api/src/main/res/xml/prefs__termux_api_app___prefs__app.xml \
+      termux-api/src/main/res/xml/prefs__termux_api_app___prefs__app___prefs__debugging.xml \
+      termux-api/src/main/res/xml/sets__termux.xml
     install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip src/main/assets/bootstrap-aarch64.zip
     install -D -m 0755 ${launcher}/bin/launcher src/main/jniLibs/arm64-v8a/liblauncher.so
     install -D -m 0755 ${libtermux}/libtermux.so src/main/jniLibs/arm64-v8a/libtermux.so

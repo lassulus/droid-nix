@@ -16,38 +16,13 @@ The droid-nix app targets API level 36, upstream Termux:API 28.
 - Location: drop the check for the background location permission
   (Android 11). droid-nix's own terminal sends the request, so the app
   is in the foreground.
-- Text-to-speech engines and speech recognizers are only visible to
-  apps that declare them in <queries> (30).
 ---
- app/src/main/AndroidManifest.xml                   | 11 +++++++++++
  .../java/com/termux/api/apis/JobSchedulerAPI.java  |  5 ++++-
  .../main/java/com/termux/api/apis/LocationAPI.java | 14 +++-----------
  .../java/com/termux/api/apis/NotificationAPI.java  | 11 +++++++----
  .../main/java/com/termux/api/apis/ToastAPI.java    | 14 +++++++++-----
- 5 files changed, 34 insertions(+), 21 deletions(-)
+ 4 files changed, 23 insertions(+), 21 deletions(-)
 
-diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index e797819..23a8442 100644
---- a/app/src/main/AndroidManifest.xml
-+++ b/app/src/main/AndroidManifest.xml
-@@ -55,6 +55,17 @@
-     <uses-feature android:name="android.hardware.wifi" android:required="false" />
-     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
- 
-+    <!-- From targetSdkVersion 30 on, the text-to-speech engines and speech
-+         recognizers are only visible to apps that declare them. -->
-+    <queries>
-+        <intent>
-+            <action android:name="android.intent.action.TTS_SERVICE" />
-+        </intent>
-+        <intent>
-+            <action android:name="android.speech.RecognitionService" />
-+        </intent>
-+    </queries>
-+
- 
- 
-     <application>
 diff --git a/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java b/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java
 index bfd12a2..bafed39 100644
 --- a/app/src/main/java/com/termux/api/apis/JobSchedulerAPI.java
