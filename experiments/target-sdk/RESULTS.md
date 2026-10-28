@@ -15,6 +15,7 @@ Device: Pixel 8a, Android 16, kernel 6.1. Date: 2026-10-28.
 | `probe.c`, `default.nix` | the probes, a static aarch64 musl binary |
 | `verify.sh`, `hello-c.nix`, `hello.nix` | the checks of the target 36 app in the droid-nix shell |
 | `mem.sh` | memory of an idle `nix repl` and of the session's bash |
+| `run-command/` | a minimal app that sends RUN_COMMAND intents (see the last section) |
 
 `probe.c` (built by `default.nix`, a static aarch64 musl binary) was shipped
 in a test APK as `lib/arm64-v8a/libprobe.so`. That APK was the app with
@@ -140,10 +141,65 @@ any of the checks above.
 | 34 | starting a foreground service needs a type | TermuxService: `specialUse` + FOREGROUND_SERVICE_SPECIAL_USE |
 | 29 | Termux execs `$PREFIX/bin/login` (a `#!/system/bin/sh` script) directly | patch 0007: run it with `/system/bin/sh` |
 
-Not changed, because nothing broke in these tests: RunCommandService
-(RUN_COMMAND intent) calls `startForeground` without a type, and
-TermuxPluginUtils builds PendingIntents without a mutability flag. Both
-crash on target 34 and 31 once they are used. Without the
-POST_NOTIFICATIONS runtime permission (33), the session notification is
-not shown, but the foreground service runs. The terminal still lays out
-below the status bar, so edge-to-edge (35) did not break it.
+The terminal still lays out below the status bar, so edge-to-edge (35)
+did not break it. RUN_COMMAND and notifications: next section.
+
+## RUN_COMMAND under target 36
+
+Other apps (Tasker etc.) run commands with the RUN_COMMAND intent:
+RunCommandService checks `allow-external-apps`, makes itself a foreground
+service and passes the command on to TermuxService, which runs it in the
+background or in a new terminal session and sends the result back through
+the caller's PendingIntent. Errors go to the caller or, without a
+PendingIntent, to a notification. What the target broke (app patch 0008):
+
+| target | what broke | fix |
+| --- | --- | --- |
+| 34 | RunCommandService's `startForeground` without a foreground service type (crash on every RUN_COMMAND) | `specialUse`, like TermuxService |
+| 31 | TermuxPluginUtils' error notification PendingIntents without a mutability flag (crash on every error) | FLAG_IMMUTABLE |
+| 29 | droid-nix callers run `$PREFIX/bin/login <command>`, a `#!/system/bin/sh` script the app may not execve | scripts whose `#!` names a `/system` interpreter run with it |
+| 33 | POST_NOTIFICATIONS is a runtime permission, never requested, so no notifications | the activity asks for it when created |
+| 31 | a caller in the background may not `startForegroundService` another app's service without an exemption | none possible in droid-nix: the exception is thrown in the caller; documented in the README |
+
+Termux upstream (master) still targets 28 and has none of these fixes.
+
+`run-command/` is a minimal caller (built with aapt2, javac, d8; target 36,
+holds `us.lassul.droidnix.permission.RUN_COMMAND`, given with `pm grant`).
+Its activity sends from the foreground, its `Trigger` receiver (`am
+broadcast`) from the background, its `Result` receiver logs the result
+bundle.
+
+```sh
+nix build --impure --expr 'import ./experiments/target-sdk/run-command {
+  nixpkgs = (builtins.getFlake (toString ./.)).inputs.nixpkgs; }'
+# sign result (apksigner), adb install, then
+adb shell pm grant us.lassul.droidnix.runcommandtest us.lassul.droidnix.permission.RUN_COMMAND
+adb shell "am start -n us.lassul.droidnix.runcommandtest/.RunCommandTest \
+  --esa args bash,-c,'echo hi' --ez background true --ez result true --ei id 1"
+adb shell "am broadcast -n 'us.lassul.droidnix.runcommandtest/.RunCommandTest\$Trigger' ..."
+adb logcat -s RunCommandTest
+```
+
+All on the Pixel 8a with an APK of the patch series (throwaway key, fresh
+install, first start from a local flake tarball):
+
+| check | result |
+| --- | --- |
+| first start | the notification permission dialog shows; allowed |
+| caller without the permission | SecurityException in the caller |
+| `allow-external-apps` unset | refused, forced error notification ("requires allow-external-apps ...", screenshot); with a PendingIntent the caller gets err 2 and that message |
+| `allow-external-apps=true`, app reopened | accepted |
+| background command (`login bash -c 'date > ~/rc-bg; echo ...; echo oops >&2; exit 3'`) from the foreground, with result | `exitCode=3 stdout=[hello from aarch64] stderr=[oops]`, about 0.2 s |
+| same from the background (receiver) | caller gets ForegroundServiceStartNotAllowedException (`Background started FGS: Disallowed`); droid-nix exempt from battery optimization does not help |
+| same, caller exempt from battery optimization | allowed (`SYSTEM_ALLOW_LISTED`), result back, `~/rc-bg` was written by the first command |
+| droid-nix not running (force-stopped), caller in foreground / exempt caller in background | RunCommandService starts TermuxService (`uidState: FGS, BFSL`), result back |
+| new terminal session with result, without "Display over other apps" | session runs, activity not opened (upstream's toast), result: transcript, `exitCode=5` |
+| same with "Display over other apps" (`appops set ... SYSTEM_ALERT_WINDOW allow`) | the session opens in front (screenshot), result as above |
+| missing executable, no PendingIntent | error notification and toast (screenshot); tapping it opens the error report |
+| session notification | "droid-nix · 1 session" shows |
+
+Right after the first start, a RUN_COMMAND through `login` ran an
+interactive bash that waited on its stdin: the bootstrap's login-inner
+always starts bash, and the first switch's login-inner is only installed by
+a login while no launcher runs. After closing all sessions (here: force
+stop) it worked. This is how droid-nix's login works, not the target.
