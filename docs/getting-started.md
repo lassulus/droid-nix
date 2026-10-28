@@ -43,15 +43,12 @@ Wi-Fi on a Pixel 8a and downloads about 200 MB.
    and builds and activates the first generation of your configuration.
    Almost everything comes from cache.nixos.org; only a few small
    derivations (the profile, `/etc`) are built on the phone.
-4. It ends with "Congratulations! Now you have Nix installed ..." and a
-   `bash-5.3$` prompt.
+4. It ends with "Congratulations! Now you have Nix installed ...", "Welcome
+   to droid-nix!" and a `-bash-5.3$` prompt.
 
-Then close the app once: type `exit`, which closes droid-nix, and open it
-again. The first session still runs the setup script from the bootstrap;
-the next start prints "Installing new login-inner..." and the prompt becomes
-`-bash-5.3$`. From then on each session is a login shell that reads
-`~/.bash_profile` and uses `user.shell`. The droid-nix notification (with
-**Exit** and **Acquire wakelock**) also only shows up after this restart.
+Each session, the first one included, is a login shell that reads
+`~/.bash_profile` and uses `user.shell`. The droid-nix notification has
+**Exit** and **Acquire wakelock**.
 
 ## What you have
 

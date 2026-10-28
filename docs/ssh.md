@@ -5,12 +5,6 @@ that you start yourself. It runs as your droid-nix user and can only log in
 as that user (`droid-nix`). It listens on port 8022, since apps cannot bind
 ports below 1024.
 
-sshd's own listener does not work in droid-nix yet: Android blocks the
-`accept` system call for apps (only `accept4` is allowed), and a plain
-`sshd` logs "accept: Function not implemented" in a loop. So
-`systemd-socket-activate` listens on the port instead and starts `sshd -i`
-for each connection.
-
 ## Configuration
 
 `~/.config/droid-nix/droid-nix.nix`:
@@ -18,28 +12,18 @@ for each connection.
 ```nix
 { config, lib, pkgs, ... }:
 
-let
-  # Listens on port 8022 in the background and runs `sshd -i` for each
-  # connection. Does nothing if it already runs.
-  sshd-start = pkgs.writeShellScriptBin "sshd-start" ''
-    if ${pkgs.procps}/bin/pgrep -f systemd-socket-activate >/dev/null; then
-      exit 0
-    fi
-    nohup ${pkgs.systemdMinimal}/bin/systemd-socket-activate -l 8022 --inetd -a \
-      ${pkgs.openssh}/bin/sshd -i >>"$HOME/.ssh/sshd.log" 2>&1 &
-  '';
-in
 {
   environment.packages = with pkgs; [
     vim
     openssh
     procps
     nettools # ifconfig
-    sshd-start
   ];
 
   environment.etc."ssh/sshd_config".text = ''
+    Port 8022
     HostKey ${config.user.home}/.ssh/ssh_host_ed25519_key
+    PidFile ${config.user.home}/.ssh/sshd.pid
     PasswordAuthentication no
     KbdInteractiveAuthentication no
   '';
@@ -67,7 +51,7 @@ in
 droid-nix switch
 ```
 
-This took 73 seconds on a Pixel 8a; the wake lock commands are built on the
+This took 23 seconds on a Pixel 8a; the wake lock commands are built on the
 phone.
 
 ## Keys
@@ -85,33 +69,22 @@ chmod 600 ~/.ssh/authorized_keys
 
 ## Start it
 
-```sh
-sshd-start
-```
-
-Connections are logged to `~/.ssh/sshd.log`. To stop the server:
-`pkill -f systemd-socket-activate`.
-
-To start it with every new session, add it to `~/.bash_profile`:
+sshd must be started with its absolute path:
 
 ```sh
-echo sshd-start >> ~/.bash_profile
+~/.nix-profile/bin/sshd -E ~/.ssh/sshd.log
 ```
 
-`~/.bash_profile` is only read once droid-nix has been closed and opened
-again after the first start (see [getting-started.md](getting-started.md)).
-A running server also keeps droid-nix from installing a changed login
-script (for example after changing `user.shell`): stop it and exit all
-sessions first.
+It logs to `~/.ssh/sshd.log`. To stop it: `kill $(cat ~/.ssh/sshd.pid)`.
+To start it with every new session, add that line to `~/.bash_profile`; if
+it already runs, the new one logs "Address already in use" and exits.
 
 ## Keep it running with the screen off
 
-Hold a wake lock while the server should be reachable. Either expand the
-droid-nix notification and tap **Acquire wakelock**, or run
-`termux-wake-lock`. `termux-wake-lock` only works if droid-nix may "Display
-over other apps" (Settings, Apps, droid-nix); otherwise it prints an error
-that says so. Android then asks "Let app always run in background?": allow
-it. **Release wakelock** or `termux-wake-unlock` releases it.
+Hold a wake lock while the server should be reachable: run
+`termux-wake-lock`, or expand the droid-nix notification and tap
+**Acquire wakelock**. Android then asks "Let app always run in background?":
+allow it. `termux-wake-unlock` or **Release wakelock** releases it.
 
 With the wake lock held, the server answered over Wi-Fi after two minutes
 with the screen off, and in forced deep Doze.
