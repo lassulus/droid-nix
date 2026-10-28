@@ -4,7 +4,9 @@
 
 let
   inherit (config.build) installationDir;
+  # procps (ps, top) needs the cpu line with at least 8 fields and btime.
   fakeProcStat = writeText "fakeProcStat" ''
+    cpu  0 0 0 0 0 0 0 0 0 0
     btime 0
   '';
   fakeProcUptime = writeText "fakeProcUptime" ''
