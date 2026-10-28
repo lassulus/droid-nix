@@ -1,4 +1,5 @@
-# Unsigned release APK of droid-nix: upstream termux-app with ./patches applied.
+# Unsigned release APK of droid-nix: upstream termux-app with ./patches applied,
+# with upstream termux-api and ./termux-api-patches built into it.
 #
 # Update deps.json (needs network, run from the flake root):
 #   nix run .#update-deps
@@ -9,7 +10,9 @@
   gradle-packages,
   jdk17_headless,
   android,
+  applyPatches,
   termux-app,
+  termux-api,
   bootstrapZip, # directory with bootstrap-aarch64.zip, see ../bootstrap
   launcher, # the static launcher, see ../bootstrap/launcher
 }:
@@ -24,6 +27,13 @@ let
 
   # Applied in file name order (git format-patch numbering).
   patches = lib.sort (a: b: a < b) (lib.filesystem.listFilesRecursive ./patches);
+
+  # The app's termux-api/ module (patch 0010).
+  termuxApi = applyPatches {
+    name = "termux-api-patched";
+    src = termux-api;
+    patches = lib.sort (a: b: a < b) (lib.filesystem.listFilesRecursive ./termux-api-patches);
+  };
 
   # The versionName set by the patch series, so it stays the single source of truth.
   versionName = lib.head (
@@ -64,6 +74,7 @@ stdenv.mkDerivation (finalAttrs: {
   # "native library" only so that it is installed where the app may execve
   # it (apps targeting API 29+ may not execve their data files, patch 0007).
   postPatch = ''
+    cp -r --no-preserve=mode ${termuxApi} termux-api
     install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip app/src/main/assets/bootstrap-aarch64.zip
     install -D -m 0755 ${launcher}/bin/launcher app/src/main/jniLibs/arm64-v8a/liblauncher.so
   '';

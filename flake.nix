@@ -9,6 +9,12 @@
       url = "github:termux/termux-app/8629e632fcb95da272221be327db653fb24befe9";
       flake = false;
     };
+
+    # Upstream Termux:API, built into the app with app/termux-api-patches.
+    termux-api = {
+      url = "github:termux/termux-api/fc26ce17e3badf85d4df191af364fcf7798047f1";
+      flake = false;
+    };
   };
 
   outputs =
@@ -33,7 +39,7 @@
       packages.${system} = {
         droid-nix-app = pkgs.callPackage ./app {
           inherit android;
-          inherit (inputs) termux-app;
+          inherit (inputs) termux-app termux-api;
           inherit (bootstrap) bootstrapZip launcher;
         };
         # Directory with bootstrap-aarch64.zip, assembled on x86_64-linux.
