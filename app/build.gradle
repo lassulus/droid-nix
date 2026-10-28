@@ -1,0 +1,40 @@
+plugins {
+    id "com.android.application" version "8.13.2"
+}
+
+android {
+    namespace "us.lassul.droidnix"
+    compileSdk project.properties.compileSdkVersion.toInteger()
+
+    defaultConfig {
+        applicationId "us.lassul.droidnix"
+        minSdk project.properties.minSdkVersion.toInteger()
+        targetSdk project.properties.targetSdkVersion.toInteger()
+        versionCode 7
+        versionName "0.7.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // Extract the native libraries: the login execs liblauncher.so from there.
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation project(":terminal-view")
+    implementation "androidx.core:core:1.13.1"
+}

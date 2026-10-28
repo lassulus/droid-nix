@@ -39,7 +39,7 @@
       packages.${system} = {
         droid-nix-app = pkgs.callPackage ./app {
           inherit android;
-          inherit (inputs) termux-app termux-api;
+          inherit (inputs) termux-app;
           inherit (bootstrap) bootstrapZip launcher;
         };
         # Directory with bootstrap-aarch64.zip, assembled on x86_64-linux.

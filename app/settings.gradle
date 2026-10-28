@@ -1,0 +1,19 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "droid-nix"
+
+// Upstream termux-app's terminal emulator and view, unpatched: app/default.nix
+// copies their src/main next to these build.gradle files.
+include ":terminal-emulator", ":terminal-view"
