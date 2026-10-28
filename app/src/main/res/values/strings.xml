@@ -10,4 +10,16 @@
     <string name="failsafe">failsafe</string>
     <string name="installing">Installing the bootstrap…</string>
     <string name="install_failed">Installing the bootstrap failed</string>
+    <string name="keyboard">Keyboard</string>
+    <string name="new_session">New session</string>
+    <string name="failsafe_session">Failsafe session</string>
+    <string name="rename_session">Session name</string>
+    <string name="select_url">Select URL</string>
+    <string name="no_urls">No URL in the transcript</string>
+    <string name="url_copied">URL copied</string>
+    <string name="share_transcript">Share transcript</string>
+    <string name="reset_terminal">Reset terminal</string>
+    <string name="kill_process">Kill process</string>
+    <string name="kill_process_confirm">Kill the session\'s process?</string>
+    <string name="keep_screen_on">Keep screen on</string>
 </resources>
