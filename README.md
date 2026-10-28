@@ -10,6 +10,17 @@ authorities, permissions and intent actions. It can be installed next to Termux
 and Nix-on-Droid without interfering with either. It only supports aarch64
 (arm64-v8a) devices.
 
+## Usage
+
+- [Getting started](docs/getting-started.md): install, first start, the
+  configuration, `droid-nix switch`, going back
+- [Installing software](docs/packages.md): packages, `nix run`, searching
+- [Running an SSH server](docs/ssh.md)
+- [Termux:API](docs/termux-api.md): notifications, clipboard, location, ...
+- [home-manager, git and an editor](docs/home-manager.md)
+- [RUN_COMMAND](#run_command-tasker-and-other-apps): running commands from
+  other apps
+
 ## Install
 
 Install with [Obtainium](https://github.com/ImranR98/Obtainium) using the
