@@ -1,23 +1,20 @@
-# Unsigned release APK of droid-nix: upstream termux-app with ./patches applied,
-# with upstream termux-api and ./termux-api-patches built into it.
+# Unsigned release APK of droid-nix: the app in this directory, built with
+# upstream termux-app's terminal-emulator and terminal-view.
 #
 # Update deps.json (needs network, run from the flake root):
 #   nix run .#update-deps
 {
   lib,
   stdenv,
-  runtimeShell,
+  runCommand,
   gradle-packages,
   jdk17_headless,
   android,
-  applyPatches,
   termux-app,
-  termux-api,
   bootstrapZip, # directory with bootstrap-aarch64.zip, see ../bootstrap
   launcher, # the static launcher, see ../bootstrap/launcher
 }:
 let
-  # termux-app pins gradle 9.2.1 in gradle-wrapper.properties and builds with JDK 17 in CI.
   gradle =
     (gradle-packages.mkGradle {
       version = "9.2.1";
@@ -25,32 +22,41 @@ let
       defaultJava = jdk17_headless;
     }).wrapped;
 
-  # Applied in file name order (git format-patch numbering).
-  patches = lib.sort (a: b: a < b) (lib.filesystem.listFilesRecursive ./patches);
-
-  # The app's termux-api/ module (patch 0010).
-  termuxApi = applyPatches {
-    name = "termux-api-patched";
-    src = termux-api;
-    patches = lib.sort (a: b: a < b) (lib.filesystem.listFilesRecursive ./termux-api-patches);
-  };
-
-  # The versionName set by the patch series, so it stays the single source of truth.
+  # build.gradle is the single source of truth for the version.
   versionName = lib.head (
     lib.concatMap (
       line:
       let
-        m = builtins.match ''\+[[:space:]]*versionName "([^"]+)".*'' line;
+        m = builtins.match ''[[:space:]]*versionName "([^"]+)".*'' line;
       in
       lib.optional (m != null) (lib.head m)
-    ) (lib.concatMap (p: lib.splitString "\n" (builtins.readFile p)) patches)
+    ) (lib.splitString "\n" (builtins.readFile ./build.gradle))
   );
+
+  # terminal-emulator's JNI part: the pty and the session's process.
+  libtermux = runCommand "libtermux" { } ''
+    mkdir $out
+    ${android.ndkBin}/aarch64-linux-android26-clang -std=c11 -Wall -Wextra -Werror -Os \
+      -fno-stack-protector -shared -Wl,--gc-sections \
+      -o $out/libtermux.so ${termux-app}/terminal-emulator/src/main/jni/termux.c
+  '';
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "droid-nix-app";
   version = versionName;
-  src = termux-app;
-  inherit patches;
+
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [
+      ./settings.gradle
+      ./build.gradle
+      ./gradle.properties
+      ./proguard-rules.pro
+      ./src
+      ./terminal-emulator
+      ./terminal-view
+    ];
+  };
 
   nativeBuildInputs = [
     gradle
@@ -60,9 +66,6 @@ stdenv.mkDerivation (finalAttrs: {
   mitmCache = gradle.fetchDeps {
     pkg = finalAttrs.finalPackage;
     data = ./deps.json;
-    # The NDK's prebuilt make hardcodes /bin/sh, which the build sandbox has
-    # but the update script's bwrap does not.
-    bwrapFlags = ''--ro-bind "$PWD" "$PWD" --ro-bind ${runtimeShell} /bin/sh'';
   };
 
   env = {
@@ -70,13 +73,18 @@ stdenv.mkDerivation (finalAttrs: {
     ANDROID_SDK_ROOT = android.sdk;
   };
 
-  # The first start unpacks this asset (patch 0003). The launcher is a
-  # "native library" only so that it is installed where the app may execve
-  # it (apps targeting API 29+ may not execve their data files, patch 0007).
+  # The first start unpacks the bootstrap asset. The launcher is a "native
+  # library" only so that it is installed where the app may execve it (apps
+  # targeting API 29+ may not execve their data files).
   postPatch = ''
-    cp -r --no-preserve=mode ${termuxApi} termux-api
-    install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip app/src/main/assets/bootstrap-aarch64.zip
-    install -D -m 0755 ${launcher}/bin/launcher app/src/main/jniLibs/arm64-v8a/liblauncher.so
+    for module in terminal-emulator terminal-view; do
+      mkdir $module/src
+      cp -r --no-preserve=mode ${termux-app}/$module/src/main $module/src/main
+    done
+    rm -r terminal-emulator/src/main/jni
+    install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip src/main/assets/bootstrap-aarch64.zip
+    install -D -m 0755 ${launcher}/bin/launcher src/main/jniLibs/arm64-v8a/liblauncher.so
+    install -D -m 0755 ${libtermux}/libtermux.so src/main/jniLibs/arm64-v8a/libtermux.so
   '';
 
   preConfigure = ''
@@ -98,7 +106,7 @@ stdenv.mkDerivation (finalAttrs: {
   enableParallelBuilding = false;
   enableParallelUpdating = false;
 
-  gradleBuildTask = ":app:assembleRelease";
+  gradleBuildTask = ":assembleRelease";
   # nixDownloadDeps resolves every configuration, which fails for AGP projects
   # (ambiguous variants) and would miss artifacts AGP resolves lazily, so record
   # exactly what the real build fetches.
@@ -107,7 +115,7 @@ stdenv.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
 
-    apks=(app/build/outputs/apk/release/*.apk)
+    apks=(build/outputs/apk/release/*.apk)
     if [ "''${#apks[@]}" -ne 1 ]; then
       echo "expected exactly one release APK, got: ''${apks[*]}" >&2
       exit 1

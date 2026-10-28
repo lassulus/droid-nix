@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">droid-nix</string>
+    <string name="notification_channel">Terminal sessions</string>
+    <plurals name="sessions">
+        <item quantity="one">%d session</item>
+        <item quantity="other">%d sessions</item>
+    </plurals>
+    <string name="exit">Exit</string>
+    <string name="failsafe">failsafe</string>
+    <string name="installing">Installing the bootstrap…</string>
+    <string name="install_failed">Installing the bootstrap failed</string>
+</resources>

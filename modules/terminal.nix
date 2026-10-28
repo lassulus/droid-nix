@@ -62,7 +62,7 @@ in
           if (lib.strings.hasPrefix "/nix" cfg.font)
           then "${config.build.installationDir}/${cfg.font}"
           else cfg.font;
-        configDir = "${config.user.home}/.termux";
+        configDir = "${config.user.home}/.droid-nix";
         fontTarget = "${configDir}/font.ttf";
         fontBackup = "${configDir}/font.ttf.bak";
 

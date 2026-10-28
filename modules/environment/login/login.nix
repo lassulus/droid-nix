@@ -50,6 +50,6 @@ writeScript "login" ''
   # launcher [-b host:guest]... TARGET argv0 argv1 ...
   # The app ships it as a native library: apps that target API 29 or later
   # may not execve their data files, but may execve those.
-  exec "$TERMUX_APP__NATIVE_LIB_DIR/liblauncher.so" $BINDS \
+  exec "$DROID_NIX_NATIVE_LIB_DIR/liblauncher.so" $BINDS \
     ${installationDir}/bin/sh ${installationDir}/bin/sh ${installationDir}/usr/lib/login-inner "$@"
 ''

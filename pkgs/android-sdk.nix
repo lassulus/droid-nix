@@ -1,5 +1,5 @@
-# Android SDK matching what termux-app's gradle files ask for
-# (gradle.properties: compileSdkVersion, ndkVersion; AGP 8.13 default build-tools).
+# Android SDK for the app (app/gradle.properties: compileSdkVersion; AGP 8.13
+# default build-tools) and the NDK for terminal-emulator's libtermux.so.
 { androidenv }:
 let
   versions = {
@@ -21,6 +21,7 @@ in
 {
   inherit versions composition;
   sdk = "${composition.androidsdk}/libexec/android-sdk";
+  ndkBin = "${composition.androidsdk}/libexec/android-sdk/ndk/${versions.ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin";
   # Just build-tools (aapt2, zipalign, apksigner) without the whole SDK closure.
   buildTools = "${builtins.head composition.build-tools}/libexec/android-sdk/build-tools/${versions.buildTools}";
 }
