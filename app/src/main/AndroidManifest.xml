@@ -119,6 +119,16 @@
             android:name=".OpenReceiver"
             android:exported="false" />
 
+        <!-- Starts TerminalService (specialUse, which Android 15 allows from
+             BOOT_COMPLETED) for the services. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name=".OpenReceiver$FilesProvider"
             android:authorities="us.lassul.droidnix.files"

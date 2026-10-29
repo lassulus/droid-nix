@@ -25,7 +25,7 @@ in
 
     enable = lib.mkEnableOption ''
       an SSH server. Android has no service manager: it is started at every
-      login and switch unless it already runs, and logs to
+      login, switch and boot unless it already runs, and logs to
       ~/.local/state/sshd/sshd.log'';
 
     port = lib.mkOption {

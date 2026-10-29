@@ -34,6 +34,8 @@ public final class TerminalService extends Service {
     /** droid-nix-wake-lock and droid-nix-wake-unlock, and the notification's button. */
     static final String ACTION_WAKE_LOCK = "us.lassul.droidnix.service_wake_lock";
     static final String ACTION_WAKE_UNLOCK = "us.lassul.droidnix.service_wake_unlock";
+    /** BootReceiver: start the services. */
+    static final String ACTION_BOOT = "us.lassul.droidnix.service_boot";
     /** Termux's service_execute (com.termux.shared.termux.TermuxConstants in termux-shared-compat). */
     static final String ACTION_EXECUTE = "us.lassul.droidnix.service_execute";
     static final String EXTRA_ARGUMENTS = "us.lassul.droidnix.execute.arguments";
@@ -56,6 +58,8 @@ public final class TerminalService extends Service {
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
     private int backgroundCommands;
+    /** The services were started at boot: keep running for them until Exit. */
+    private boolean booted;
     /** Where the sessions that commands started send their results. */
     private final Map<TerminalSession, PendingIntent> results = new HashMap<>();
 
@@ -81,6 +85,10 @@ public final class TerminalService extends Service {
             releaseWakeLock();
         } else if (ACTION_EXECUTE.equals(action)) {
             execute(intent);
+        } else if (ACTION_BOOT.equals(action)) {
+            // A login without a session runs the login hook, as every login does.
+            booted = true;
+            runInBackground(Shell.login(this, "true"), null, null, null);
         }
         return START_NOT_STICKY;
     }
@@ -118,8 +126,12 @@ public final class TerminalService extends Service {
             }
             return;
         }
+        runInBackground(command, workingDirectory, intent.getStringExtra(EXTRA_STDIN), pendingIntent);
+    }
+
+    private void runInBackground(String[] command, String workingDirectory, String stdin, PendingIntent pendingIntent) {
         backgroundCommands++;
-        BackgroundCommand.start(this, command, workingDirectory, intent.getStringExtra(EXTRA_STDIN), pendingIntent,
+        BackgroundCommand.start(this, command, workingDirectory, stdin, pendingIntent,
             () -> new Handler(getMainLooper()).post(() -> {
                 backgroundCommands--;
                 stopIfIdle();
@@ -141,9 +153,9 @@ public final class TerminalService extends Service {
         }
     }
 
-    /** Stops the service when nothing runs in it and no activity shows it. */
+    /** Stops the service when nothing runs in it, no activity shows it and it did not start the services at boot. */
     private void stopIfIdle() {
-        if (sessions.isEmpty() && backgroundCommands == 0 && activity == null) stopSelf();
+        if (sessions.isEmpty() && backgroundCommands == 0 && activity == null && !booted) stopSelf();
     }
 
     @Override

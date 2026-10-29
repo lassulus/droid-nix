@@ -188,7 +188,7 @@ termux-api-package is installed as `droid-nix-NAME`, and its option is
 | `wake-lock`, `wake-unlock` | `droid-nix-wake-lock`, `droid-nix-wake-unlock` |
 | `xdg-open` | `xdg-open` (runs `droid-nix-open`) |
 
-`android-integration.wakeLock.enable` acquires the wake lock at every login.
+`android-integration.wakeLock.enable` acquires the wake lock at every login and at boot.
 
 ### Termux:API
 
@@ -233,6 +233,7 @@ request, so `droid-nix-location` does not need "Allow all the time".
 | `OpenReceiver` | droid-nix-open, xdg-open |
 | `HomeDocumentsProvider` | the home directory in Android's Files app and file picker |
 | `RunCommandService`, `BackgroundCommand` | RUN_COMMAND, commands without a terminal |
+| `BootReceiver` | starts the services (a login without a session) at boot |
 
 Upstream code it builds, unpatched, from termux-app (pinned in
 `app/sources.json`):

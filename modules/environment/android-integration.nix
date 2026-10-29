@@ -114,8 +114,8 @@ in
       default = false;
       example = "true";
       description = ''
-        Acquire the wake lock (like `droid-nix-wake-lock`) at every login and
-        switch, so that programs keep running with the screen off.
+        Acquire the wake lock (like `droid-nix-wake-lock`) at every login,
+        switch and boot, so that programs keep running with the screen off.
         `services.sshd` turns this on by default.
       '';
     };
