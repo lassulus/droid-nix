@@ -72,13 +72,11 @@ writeText "login-inner" ''
       echo "Installing first droid-nix generation..."
       ${nixCmd} run ${config.build.flake.droid-nix} -- switch --flake "$flake"
 
-      echo
-      echo "Congratulations! Now you have Nix installed with some default packages like bashInteractive, \
-    coreutils, cacert and, most importantly, droid-nix itself to manage local configuration. Edit the flake"
-      echo "  $flake"
-      echo "and run"
-      echo "  droid-nix switch"
-      echo
+      if [ "$flake" = "${flakeDir}" ]; then
+        echo "Done. Edit ~/.config/droid-nix/droid-nix.nix and run droid-nix switch."
+      else
+        echo "Done. Change the configuration in $flake and run droid-nix switch."
+      fi
     fi
 
     # The switch made /bin/sh and this script those of its generation.
