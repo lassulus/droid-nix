@@ -15,6 +15,10 @@ shift
 [[ $command = switch || $command = build ]] || usage
 
 flake=$HOME/.config/droid-nix
+# The flake chosen at the first start, if not the template.
+if [[ -e $HOME/.config/droid-nix-flake ]]; then
+    flake=$(< "$HOME/.config/droid-nix-flake")
+fi
 nixArgs=()
 while [[ $# -gt 0 ]]; do
     if [[ $1 = --flake ]]; then

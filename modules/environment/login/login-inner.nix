@@ -44,22 +44,38 @@ writeText "login-inner" ''
 
       export NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-      echo "Installing flake from default template..."
-      ${nixCmd} flake new ${flakeDir} --template ${config.build.flake.droid-nix}
+      # REF#NAME as for droid-nix switch --flake; empty for the template.
+      flake=
+      if [ -t 0 ]; then
+        echo "Enter a flake REF#NAME to build its droidNixConfigurations.NAME, or press"
+        echo "Enter for a new configuration in ~/.config/droid-nix from the template."
+        printf "Flake to build [~/.config/droid-nix]: "
+        read -r flake
+      fi
 
-      ${lib.optionalString config.build.flake.inputOverrides ''
-        echo "Overriding input urls in the flake..."
-        ${busybox}/bin/sed -i 's|"github:lassulus/droid-nix"|"${lib.escape [ "\\" "&" "|" ] config.build.flake.droid-nix}"|' \
-          "${flakeDir}/flake.nix"
-      ''}
+      if [ -z "$flake" ]; then
+        echo "Installing flake from default template..."
+        ${nixCmd} flake new ${flakeDir} --template ${config.build.flake.droid-nix}
+
+        ${lib.optionalString config.build.flake.inputOverrides ''
+          echo "Overriding input urls in the flake..."
+          ${busybox}/bin/sed -i 's|"github:lassulus/droid-nix"|"${lib.escape [ "\\" "&" "|" ] config.build.flake.droid-nix}"|' \
+            "${flakeDir}/flake.nix"
+        ''}
+        flake=${flakeDir}
+      else
+        # droid-nix switch builds it when called without --flake.
+        ${busybox}/bin/mkdir -p "$HOME/.config"
+        echo "$flake" > "$HOME/.config/droid-nix-flake"
+      fi
 
       echo "Installing first droid-nix generation..."
-      ${nixCmd} run ${config.build.flake.droid-nix} -- switch --flake ${flakeDir}
+      ${nixCmd} run ${config.build.flake.droid-nix} -- switch --flake "$flake"
 
       echo
       echo "Congratulations! Now you have Nix installed with some default packages like bashInteractive, \
     coreutils, cacert and, most importantly, droid-nix itself to manage local configuration. Edit the flake"
-      echo "  ~/.config/droid-nix/"
+      echo "  $flake"
       echo "and run"
       echo "  droid-nix switch"
       echo

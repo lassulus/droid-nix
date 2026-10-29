@@ -12,8 +12,22 @@ if Android asks.
 ## First start
 
 The first start needs a network connection and downloads about 200 MB. It
-creates your configuration from a template, builds it and ends at a shell
-prompt. Allow notifications if you want the session notification and
+asks:
+
+```
+Flake to build [~/.config/droid-nix]:
+```
+
+Press Enter to create your configuration in `~/.config/droid-nix` from a
+template. Or enter your own flake as `REF#NAME`, e.g.
+`github:you/config#phone`, to build its `droidNixConfigurations.phone`
+(`NAME` defaults to `default`); later `droid-nix switch` builds that flake
+again (it is kept in `~/.config/droid-nix-flake`). Substituters and keys
+in the configuration's `nix.substituters` and `nix.trustedPublicKeys` are
+used from the first build on.
+
+The first start builds the configuration and ends at a shell prompt. Allow
+notifications if you want the session notification and
 `droid-nix-notification`.
 
 The default configuration has bash, coreutils, `less`, `vim`, `nix` and the
