@@ -18,7 +18,8 @@ and only supports aarch64 (arm64-v8a) devices.
   configuration, `droid-nix switch`, phone storage, going back
 - [Installing software](docs/packages.md): packages, `nix run`, searching
 - [Running an SSH server](docs/ssh.md)
-- [Android APIs](docs/api.md): notifications, clipboard, location, ...
+- [Android APIs](docs/api.md): notifications, clipboard, location, ...,
+  adb to the phone itself
 - [home-manager, git and an editor](docs/home-manager.md)
 - [RUN_COMMAND](#run_command-tasker-and-other-apps): running commands from
   other apps
@@ -189,6 +190,9 @@ termux-api-package is installed as `droid-nix-NAME`, and its option is
 | `xdg-open` | `xdg-open` (runs `droid-nix-open`) |
 
 `android-integration.wakeLock.enable` acquires the wake lock at every login and at boot.
+`android-integration.adb.enable` installs `adb` and `droid-nix-adb-connect`
+to use adb on the phone itself over Wireless debugging
+([docs/api.md](docs/api.md#adb-to-the-phone-itself)).
 
 ### Termux:API
 

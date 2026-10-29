@@ -15,12 +15,22 @@ let
     pkgs.callPackage ../../pkgs/android-integration/termux-api.nix {
       inherit androidApp termux-am;
     };
+  # Only adb from android-tools: the rest (fastboot, mkbootimg, ...) needs Python.
+  adb = pkgs.runCommand "adb-${pkgs.android-tools.version}" { } ''
+    install -D ${pkgs.android-tools}/bin/adb $out/bin/adb
+  '';
+  adb-connect = pkgs.callPackage ../../pkgs/android-integration/adb-connect.nix { inherit adb; };
 in
 {
 
   ###### interface
 
   options.android-integration = {
+
+    adb.enable = lib.mkEnableOption ''
+      `adb` (from android-tools) and a `droid-nix-adb-connect` command that
+      connects it to this phone over Wireless debugging, for the rights of
+      the shell user (`adb shell pm ...`, `settings`, `dumpsys`, `input`)'';
 
     am.enable = lib.mkOption {
       type = lib.types.bool;
@@ -135,6 +145,7 @@ in
 
   config = let ifD = cond: pkg: if cond then [ pkg ] else [ ]; in {
     environment.packages =
+      (lib.optionals cfg.adb.enable [ adb adb-connect ]) ++
       (ifD cfg.am.enable termux-am) ++
       (ifD cfg.api.enable termux-api) ++
       (ifD cfg.setup-storage.enable termux-tools.setup_storage) ++
