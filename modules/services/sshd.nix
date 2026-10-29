@@ -57,8 +57,11 @@ in
 
     android-integration.wakeLock.enable = lib.mkDefault true;
 
+    # sshd removes its pid file when it stops. The login's /bin/sh is bash
+    # in POSIX mode, where `kill -0 ""` succeeds: check for an empty pid.
     environment.loginHook = ''
-      if ! kill -0 "$(${pkgs.coreutils}/bin/cat ${stateDir}/sshd.pid 2>/dev/null)" 2>/dev/null; then
+      sshd_pid=$(${pkgs.coreutils}/bin/cat ${stateDir}/sshd.pid 2>/dev/null || true)
+      if [ -z "$sshd_pid" ] || ! kill -0 "$sshd_pid" 2>/dev/null; then
         ${pkgs.coreutils}/bin/mkdir --parents ${stateDir}
         [ -e ${hostKey} ] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -f ${hostKey} || true
         ${pkgs.openssh}/bin/sshd -f ${sshdConfig} -E ${stateDir}/sshd.log || true
