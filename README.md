@@ -39,16 +39,24 @@ Android". Play Protect may still offer to scan it as an app it has not seen
 before ("Install without scanning" is under "More details").
 
 On first start the app unpacks the bootstrap; this needs no network. Then the
-first login:
+first login asks `Flake to build [~/.config/droid-nix]:`. Enter (or no
+terminal, e.g. RUN_COMMAND):
 
 1. creates `~/.config/droid-nix` from this flake's default template,
 2. runs `nix run github:lassulus/droid-nix -- switch --flake ~/.config/droid-nix`.
 
+A flake `REF#NAME` instead is built directly with `droid-nix switch --flake
+REF#NAME` and written to `~/.config/droid-nix-flake`.
+
 After that, edit `~/.config/droid-nix/droid-nix.nix` and run `droid-nix switch`
-(build and activate) or `droid-nix build` (only build). `--flake REF#NAME`
+(build and activate) or `droid-nix build` (only build); they build the flake in
+`~/.config/droid-nix-flake` if it exists. `--flake REF#NAME`
 builds `droidNixConfigurations.NAME` of any flake ref instead (`NAME` defaults
 to `default`), e.g. `droid-nix switch --flake github:lassulus/superconfig#massulus`;
 all other arguments are passed to `nix build`, e.g. `droid-nix switch --show-trace`.
+Before building, `droid-nix` evaluates the configuration's `nix.substituters`
+and `nix.trustedPublicKeys` and passes them as `extra-substituters` and
+`extra-trusted-public-keys`, so a new cache is used by the switch that adds it.
 
 Each switch adds a generation to the profile `/nix/var/nix/profiles/droid-nix`.
 To go back to generation N:
