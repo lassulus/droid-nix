@@ -27,9 +27,17 @@ while [[ $# -gt 0 ]]; do
     fi
 done
 [[ $flake = *#* ]] || flake+="#default"
+configuration="${flake%%#*}#droidNixConfigurations.${flake#*#}"
+nix=(@nix@/bin/nix --extra-experimental-features "nix-command flakes")
 
-build=(@nix@/bin/nix --extra-experimental-features "nix-command flakes" build
-       "${nixArgs[@]}" --impure "${flake%%#*}#droidNixConfigurations.${flake#*#}.activationPackage")
+# Substitute from the configuration's caches before its nix.conf is active.
+caches=$("${nix[@]}" eval --impure --raw "$configuration.config.nix" \
+         --apply 'nix: toString nix.substituters + "\n" + toString nix.trustedPublicKeys')
+
+build=("${nix[@]}" build "${nixArgs[@]}" --impure
+       --option extra-substituters "${caches%%$'\n'*}"
+       --option extra-trusted-public-keys "${caches#*$'\n'}"
+       "$configuration.activationPackage")
 
 if [[ $command = build ]]; then
     exec "${build[@]}"
