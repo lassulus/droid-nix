@@ -35,7 +35,7 @@ final class Shell {
         Map<String, String> environment = new HashMap<>(System.getenv());
         environment.put("HOME", home(context).getPath());
         environment.put("TMPDIR", new File(usr(context), "tmp").getPath());
-        environment.put("LANG", "en_US.UTF-8");
+        environment.put("LANG", "C.UTF-8");
         environment.put("TERM", "xterm-256color");
         environment.put("COLORTERM", "truecolor");
         // The login runs the launcher, liblauncher.so, from there.
