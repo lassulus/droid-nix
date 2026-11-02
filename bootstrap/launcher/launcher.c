@@ -986,6 +986,10 @@ static uint32_t baud(uint32_t code)
 // Our SIGSYS sigaction. A raw rt_sigaction with SA_RESTORER makes sigreturn
 // go through sig_restorer (in the exempt range), as in phase 1. Kept global so
 // the handler can re-pin it when a program tries to change SIGSYS.
+// SA_NODEFER keeps SIGSYS unblocked while the handler runs: a signal arriving
+// during it (zsh's SIGCHLD while it traps rt_sigprocmask) runs the
+// program's handler on top of ours, and a syscall trapped there with SIGSYS
+// blocked is force-killed (signal 31). With NODEFER it nests into ours.
 struct kernel_sigaction {
 	void *handler;
 	unsigned long flags;
@@ -993,7 +997,8 @@ struct kernel_sigaction {
 	uint64_t mask;
 };
 static void sigsys_handler(int sig, siginfo_t *si, void *ctx);
-static struct kernel_sigaction g_ka = { (void *)sigsys_handler, SA_SIGINFO | SA_RESTORER,
+static struct kernel_sigaction g_ka = { (void *)sigsys_handler,
+					SA_SIGINFO | SA_RESTORER | SA_NODEFER,
 					(void *)sig_restorer, 0 };
 
 // Canonicalise the path in r[pa] (dirfd in r[da], or the cwd if da < 0) into
@@ -1554,10 +1559,10 @@ static void install_handler(void)
 		die("rt_sigaction(SIGSYS) failed");
 }
 
-// A trapped execve re-execs the loader from inside the SIGSYS handler, where
-// SIGSYS is masked; that mask survives execve, so the new image (and the
-// target it jumps to) would otherwise start with SIGSYS blocked, and a
-// seccomp trap on a blocked SIGSYS is force-killed regardless of the handler.
+// The signal mask survives execve, so a launcher started with SIGSYS blocked
+// (by a parent outside, or a handler that defers it) would start the target
+// with it blocked, and a seccomp trap on a blocked SIGSYS is force-killed
+// regardless of the handler.
 static void unblock_sigsys(void)
 {
 	uint64_t set = 1ULL << (SIGSYS - 1);
