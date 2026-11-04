@@ -18,6 +18,7 @@ and only supports aarch64 (arm64-v8a) devices.
   configuration, `droid-nix switch`, phone storage, going back
 - [Installing software](docs/packages.md): packages, `nix run`, searching
 - [Running an SSH server](docs/ssh.md)
+- [Sound](docs/sound.md): PipeWire, e.g. for mpv
 - [Android APIs](docs/api.md): notifications, clipboard, location, ...,
   adb to the phone itself
 - [home-manager, git and an editor](docs/home-manager.md)
