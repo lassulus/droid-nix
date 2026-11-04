@@ -32,6 +32,7 @@ public final class App extends Application {
         getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(
             TerminalService.CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW));
         AmServer.start(this);
+        AudioPipe.start(this);
         // Termux:API sends its results with this context.
         ResultReturner.setContext(this);
     }

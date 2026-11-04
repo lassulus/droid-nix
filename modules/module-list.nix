@@ -18,6 +18,7 @@
   ./environment/session-init.nix
   ./environment/shell.nix
   ./home-manager.nix
+  ./services/pipewire.nix
   ./services/sshd.nix
   ./terminal.nix
   ./time.nix
