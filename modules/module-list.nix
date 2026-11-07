@@ -7,6 +7,7 @@
 [
   ./build/activation.nix
   ./build/config.nix
+  ./desktop.nix
   ./environment/android-integration.nix
   ./environment/ca.nix
   ./environment/etc
