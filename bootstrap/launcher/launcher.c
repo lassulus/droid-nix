@@ -1546,6 +1546,32 @@ static __attribute__((noinline)) void handle(unsigned long *r, long nr, void *ct
 		r[0] = (unsigned long)e;
 		return;
 	}
+	// The non-res variants (Xorg's Popen does setgid(getgid())): an id
+	// that is -1 or one of the current real/effective/saved ids succeeds.
+	case SYS_setuid:
+	case SYS_setgid:
+	case SYS_setreuid:
+	case SYS_setregid: {
+		int uid = nr == SYS_setuid || nr == SYS_setreuid;
+		uint32_t id[3];
+		long e = 0;
+		SYS3(uid ? SYS_getresuid : SYS_getresgid, &id[0], &id[1], &id[2]);
+		int n = nr == SYS_setuid || nr == SYS_setgid ? 1 : 2;
+		for (int i = 0; i < n; i++)
+			if ((uint32_t)r[i] != (uint32_t)-1 && (uint32_t)r[i] != id[0] &&
+			    (uint32_t)r[i] != id[1] && (uint32_t)r[i] != id[2])
+				e = -EPERM;
+		r[0] = (unsigned long)e;
+		return;
+	}
+	// setfs[ug]id returns the previous fsid and changes nothing here; the
+	// fsid follows the effective id.
+	case SYS_setfsuid:
+		r[0] = (unsigned long)SYS0(SYS_geteuid);
+		return;
+	case SYS_setfsgid:
+		r[0] = (unsigned long)SYS0(SYS_getegid);
+		return;
 	default:
 		r[0] = (unsigned long)-ENOSYS;
 		return;
