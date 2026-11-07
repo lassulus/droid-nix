@@ -93,6 +93,20 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
+        <!-- Its own task, so the desktop is a separate window in the app switcher. -->
+        <activity
+            android:name=".DesktopActivity"
+            android:label="@string/desktop_name"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="us.lassul.droidnix.desktop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboard|keyboardHidden|navigation|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".TerminalService"
             android:exported="false"

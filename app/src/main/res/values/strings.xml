@@ -29,4 +29,6 @@
     <string name="kill_process">Kill process</string>
     <string name="kill_process_confirm">Kill the session\'s process?</string>
     <string name="keep_screen_on">Keep screen on</string>
+    <string name="desktop_name">droid-nix desktop</string>
+    <string name="desktop_not_running">The desktop is not running.\nStart it with droid-nix-desktop in the terminal,\nthen open this again.</string>
 </resources>
