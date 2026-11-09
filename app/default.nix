@@ -49,6 +49,14 @@ let
       -fno-stack-protector -shared -Wl,--gc-sections \
       -o $out/libtermux.so ${termux-app}/terminal-emulator/src/main/jni/termux.c
   '';
+
+  # DesktopActivity's native part: copies frames into its window.
+  libdesktop = runCommand "libdesktop" { } ''
+    mkdir $out
+    ${android.ndkBin}/aarch64-linux-android26-clang -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter -O2 \
+      -shared -Wl,--gc-sections -landroid \
+      -o $out/libdesktop.so ${./jni/desktop.c}
+  '';
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "droid-nix-app";
@@ -110,6 +118,7 @@ stdenv.mkDerivation (finalAttrs: {
     install -D -m 0644 ${bootstrapZip}/bootstrap-aarch64.zip src/main/assets/bootstrap-aarch64.zip
     install -D -m 0755 ${launcher}/bin/launcher src/main/jniLibs/arm64-v8a/liblauncher.so
     install -D -m 0755 ${libtermux}/libtermux.so src/main/jniLibs/arm64-v8a/libtermux.so
+    install -D -m 0755 ${libdesktop}/libdesktop.so src/main/jniLibs/arm64-v8a/libdesktop.so
   '';
 
   preConfigure = ''
