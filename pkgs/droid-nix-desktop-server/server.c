@@ -72,10 +72,11 @@ static int fb = -1;
 static struct wl_buffer *buffer;
 static uint32_t fb_format, fb_width, fb_height, fb_stride;
 
-// The capture in progress, whether the app waits for one, and whether the
-// last one failed (it is retried after the output's next change).
+// The capture in progress, whether the compositor got our buffer for it,
+// whether the app waits for one, and whether the last one was refused (it
+// is retried after the output's next change).
 static struct zwlr_screencopy_frame_v1 *frame;
-static bool wanted, failed, full;
+static bool copying, wanted, failed, full;
 static int32_t damage_x1, damage_y1, damage_x2, damage_y2;
 
 static bool button;
@@ -153,6 +154,7 @@ static void frame_buffer(void *data, struct zwlr_screencopy_frame_v1 *f, uint32_
 		full = true;
 	}
 	zwlr_screencopy_frame_v1_copy_with_damage(f, buffer);
+	copying = true;
 }
 
 static void frame_flags(void *data, struct zwlr_screencopy_frame_v1 *f, uint32_t flags) {
@@ -183,10 +185,14 @@ static void frame_ready(void *data, struct zwlr_screencopy_frame_v1 *f,
 }
 
 static void frame_failed(void *data, struct zwlr_screencopy_frame_v1 *f) {
-	// E.g. the output changed its size meanwhile: try again once it is done.
 	zwlr_screencopy_frame_v1_destroy(f);
 	frame = NULL;
-	failed = true;
+	// With our buffer it failed at an output commit, e.g. one with a new
+	// size (whose wl_output.done may have come before): a new capture
+	// waits for the next commit, so it can start at once. Without, the
+	// output is disabled: try again once it changes.
+	if (copying) wanted = true;
+	else failed = true;
 }
 
 static const struct zwlr_screencopy_frame_v1_listener frame_listener = {
@@ -198,7 +204,7 @@ static const struct zwlr_screencopy_frame_v1_listener frame_listener = {
 };
 
 static void capture(void) {
-	wanted = false;
+	wanted = copying = false;
 	damage_x1 = damage_y1 = damage_x2 = damage_y2 = 0;
 	frame = zwlr_screencopy_manager_v1_capture_output(screencopy, 0, output);
 	zwlr_screencopy_frame_v1_add_listener(frame, &frame_listener, NULL);
