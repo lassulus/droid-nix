@@ -40,6 +40,9 @@
       # The switch tool, run on the device by the first login and by users.
       packages.aarch64-linux = rec {
         droid-nix = nixpkgs.legacyPackages.aarch64-linux.callPackage ./pkgs/droid-nix { };
+        # Serves desktop.session to the app, see modules/desktop.nix.
+        droid-nix-desktop-server =
+          nixpkgs.legacyPackages.aarch64-linux.callPackage ./pkgs/droid-nix-desktop-server { };
         default = droid-nix;
       };
 

@@ -2,17 +2,18 @@ package us.lassul.droidnix;
 
 import android.app.Activity;
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.os.Bundle;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -28,46 +29,59 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
-import java.io.BufferedInputStream;
-import java.io.DataInputStream;
+import java.io.EOFException;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
+import java.nio.ByteOrder;
 
 /**
  * The "droid-nix desktop" icon: shows the sway of `droid-nix-desktop`
- * (modules/desktop.nix) fullscreen. wayvnc serves it on files/desktop.sock;
- * this is a small RFB 3.8 client for it: raw frames at the window's size
- * (ExtendedDesktopSize), a finger as the left mouse button, keys as keysyms.
- * A two-finger tap shows or hides the soft keyboard.
+ * (modules/desktop.nix) fullscreen. droid-nix-desktop-server
+ * (pkgs/droid-nix-desktop-server/server.c, which describes the messages)
+ * serves it on files/desktop.sock: it shares a frame buffer with this
+ * activity and says which part of it changed; the native draw copies that
+ * part into the window. A finger is the left mouse button, keys go as
+ * keysyms. A two-finger tap shows or hides the soft keyboard.
  */
 public final class DesktopActivity extends Activity implements SurfaceHolder.Callback {
 
-    private static final int EXTENDED_DESKTOP_SIZE = -308;
+    static {
+        System.loadLibrary("desktop");
+    }
 
+    // app/jni/desktop.c
+    private static native long acquireWindow(Surface surface);
+    private static native void releaseWindow(long window);
+    private static native void draw(long window, long frame, int width, int height, int stride, boolean swap,
+        int x, int y, int w, int h);
+
+    private FrameLayout root;
     private Screen screen;
     private TextView status;
+    // Guarded by this: the connection, the window, the space for the desktop
+    // (the output's size) and the mapped frame buffer. Sending only needs
+    // out, so that touch and keys never wait for a frame being drawn.
     private LocalSocket socket;
-    private OutputStream out;
-    // Framebuffer size and its scale on the surface, set by the reader thread.
+    private volatile OutputStream out;
+    private long window;
+    private int availableWidth, availableHeight;
+    private long frame, frameSize;
     private volatile int fbWidth, fbHeight;
-    private volatile float scale = 1;
-    // wayvnc's screen id, needed to resize it; -1 until it told us.
-    private int screenId = -1;
-    private int surfaceWidth, surfaceHeight, requestedWidth, requestedHeight;
+    private int fbStride;
+    private boolean swap;
     private boolean twoFingers;
-    // The reader thread's frame, as wayvnc sends it and as a bitmap.
-    private byte[] frame;
-    private Bitmap bitmap;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         screen = new Screen(this);
         screen.getHolder().addCallback(this);
+        screen.getHolder().setFormat(PixelFormat.RGBX_8888);
         screen.setOnTouchListener((v, e) -> touch(e));
         root.addView(screen);
         status = new TextView(this);
@@ -86,6 +100,18 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
             Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
             view.setPadding(0, 0, 0, ime.bottom);
             return WindowInsetsCompat.CONSUMED;
+        });
+        // The output gets the size of the space for it.
+        root.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+            int w = v.getWidth() - v.getPaddingLeft() - v.getPaddingRight();
+            int h = v.getHeight() - v.getPaddingTop() - v.getPaddingBottom();
+            synchronized (this) {
+                if (w == availableWidth && h == availableHeight) return;
+                availableWidth = w;
+                availableHeight = h;
+            }
+            resize();
+            root.post(this::layoutScreen);
         });
     }
 
@@ -112,78 +138,43 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
         }
     }
 
-    // Reader thread: handshake, then frames until the socket closes.
+    // Reader thread: the server's messages until the socket closes.
     private void run(LocalSocket s) {
         try {
             s.connect(new LocalSocketAddress(new File(getFilesDir(), "desktop.sock").getPath(),
                 LocalSocketAddress.Namespace.FILESYSTEM));
-            DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream(), 1 << 16));
+            InputStream in = s.getInputStream();
             OutputStream o = s.getOutputStream();
-            in.readFully(new byte[12]);
-            o.write("RFB 003.008\n".getBytes(StandardCharsets.US_ASCII));
-            int types = in.readUnsignedByte();
-            if (types == 0) throw new IOException(readString(in));
-            in.readFully(new byte[types]);
-            o.write(1); // security type None
-            if (in.readInt() != 0) throw new IOException(readString(in));
-            o.write(1); // ClientInit: shared
-            int width = in.readUnsignedShort(), height = in.readUnsignedShort();
-            in.readFully(new byte[16]); // the server's pixel format
-            readString(in); // desktop name
-            allocate(width, height);
-            // 32 bit, red/green/blue in the bytes Bitmap.Config.ARGB_8888 has in memory.
-            o.write(new byte[] { 0, 0, 0, 0, 32, 24, 0, 1, 0, (byte) 255, 0, (byte) 255, 0, (byte) 255, 0, 8, 16, 0, 0, 0 });
-            o.write(ByteBuffer.allocate(12).put((byte) 2).put((byte) 0).putShort((short) 2)
-                .putInt(0).putInt(EXTENDED_DESKTOP_SIZE).array()); // raw
             synchronized (this) {
                 if (socket != s) return;
                 out = o;
             }
             runOnUiThread(() -> status.setVisibility(View.GONE));
-
-            requestUpdate(false, width, height);
+            resize();
+            send(0, 0, 0, 0);
+            byte[] b = new byte[20];
+            ByteBuffer m = ByteBuffer.wrap(b).order(ByteOrder.nativeOrder());
             while (true) {
-                int type = in.readUnsignedByte();
-                if (type == 0) { // FramebufferUpdate
-                    in.readUnsignedByte();
-                    int rects = in.readUnsignedShort();
-                    for (int i = 0; i < rects; i++) {
-                        int x = in.readUnsignedShort(), y = in.readUnsignedShort();
-                        int w = in.readUnsignedShort(), h = in.readUnsignedShort();
-                        int encoding = in.readInt();
-                        if (encoding == 0) {
-                            for (int row = 0; row < h; row++)
-                                in.readFully(frame, ((y + row) * width + x) * 4, w * 4);
-                        } else if (encoding == EXTENDED_DESKTOP_SIZE) {
-                            // w x h is the (new) framebuffer size.
-                            int screens = in.readUnsignedByte();
-                            in.readFully(new byte[3]);
-                            for (int n = 0; n < screens; n++) {
-                                int id = in.readInt();
-                                in.readFully(new byte[12]);
-                                if (n == 0) synchronized (this) {
-                                    screenId = id;
-                                }
-                            }
-                            width = w;
-                            height = h;
-                            allocate(width, height);
-                            resize();
-                        } else {
-                            throw new IOException("unexpected encoding " + encoding);
-                        }
+                for (int n = 0; n < b.length; ) {
+                    int r = in.read(b, n, b.length - n);
+                    if (r < 0) throw new EOFException();
+                    n += r;
+                }
+                if (m.getInt(0) == 0) { // a new frame buffer
+                    FileDescriptor[] fds = s.getAncillaryFileDescriptors();
+                    if (fds == null || fds.length != 1) throw new IOException("no frame buffer");
+                    map(s, fds[0], m.getInt(4), m.getInt(8), m.getInt(12), m.getInt(16));
+                    runOnUiThread(this::layoutScreen);
+                } else { // a frame
+                    synchronized (this) {
+                        if (socket != s) return;
+                        if (window != 0 && frame != 0)
+                            draw(window, frame, fbWidth, fbHeight, fbStride, swap, m.getInt(4), m.getInt(8), m.getInt(12), m.getInt(16));
                     }
-                    draw();
-                    requestUpdate(true, width, height);
-                } else if (type == 2) { // Bell
-                } else if (type == 3) { // ServerCutText
-                    in.readFully(new byte[3]);
-                    in.readFully(new byte[in.readInt()]);
-                } else {
-                    throw new IOException("unexpected message " + type);
+                    send(0, 0, 0, 0);
                 }
             }
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | ErrnoException | RuntimeException e) {
             synchronized (this) {
                 if (socket != s) return; // closed in onStop
                 out = null;
@@ -192,75 +183,77 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
         }
     }
 
-    private static String readString(DataInputStream in) throws IOException {
-        byte[] b = new byte[in.readInt()];
-        in.readFully(b);
-        return new String(b, StandardCharsets.UTF_8);
-    }
-
-    private void allocate(int width, int height) {
-        frame = new byte[width * height * 4];
-        bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        bitmap.setHasAlpha(false);
-        fbWidth = width;
-        fbHeight = height;
-    }
-
-    private void draw() {
-        bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(frame));
-        SurfaceHolder holder = screen.getHolder();
-        Canvas canvas = holder.lockCanvas();
-        if (canvas == null) return;
-        float s = Math.min((float) canvas.getWidth() / bitmap.getWidth(), (float) canvas.getHeight() / bitmap.getHeight());
-        scale = s;
-        canvas.drawColor(Color.BLACK);
-        canvas.scale(s, s);
-        canvas.drawBitmap(bitmap, 0, 0, new Paint(Paint.FILTER_BITMAP_FLAG));
-        holder.unlockCanvasAndPost(canvas);
-    }
-
-    private synchronized void send(byte[] message) {
-        if (out == null) return;
+    // Maps the server's frame buffer instead of the previous one.
+    private synchronized void map(LocalSocket s, FileDescriptor fd, int width, int height, int stride, int format)
+            throws ErrnoException {
         try {
-            out.write(message);
+            if (socket != s) return;
+            if (frame != 0) Os.munmap(frame, frameSize);
+            frame = 0;
+            frameSize = (long) stride * height;
+            frame = Os.mmap(0, frameSize, OsConstants.PROT_READ, OsConstants.MAP_SHARED, fd, 0);
+            fbWidth = width;
+            fbHeight = height;
+            fbStride = stride;
+            // wl_shm's ARGB8888 and XRGB8888 are B, G, R, X in memory.
+            swap = format == 0 || format == 1;
+        } finally {
+            Os.close(fd);
+        }
+    }
+
+    // Scales the screen to the space for it, keeping the frame's aspect ratio.
+    private void layoutScreen() {
+        int w, h, aw, ah;
+        synchronized (this) {
+            w = fbWidth;
+            h = fbHeight;
+            aw = availableWidth;
+            ah = availableHeight;
+        }
+        if (w == 0 || aw == 0) return;
+        float s = Math.min((float) aw / w, (float) ah / h);
+        FrameLayout.LayoutParams p = (FrameLayout.LayoutParams) screen.getLayoutParams();
+        int pw = Math.round(w * s), ph = Math.round(h * s);
+        if (p.width == pw && p.height == ph) return;
+        p.width = pw;
+        p.height = ph;
+        screen.setLayoutParams(p);
+    }
+
+    private void send(int type, int a, int b, int c) {
+        OutputStream o = out;
+        if (o == null) return;
+        try {
+            synchronized (o) {
+                o.write(ByteBuffer.allocate(16).order(ByteOrder.nativeOrder())
+                    .putInt(type).putInt(a).putInt(b).putInt(c).array());
+            }
         } catch (IOException ignored) {
             // The reader sees the closed socket.
         }
     }
 
-    private void requestUpdate(boolean incremental, int width, int height) {
-        send(ByteBuffer.allocate(10).put((byte) 3).put((byte) (incremental ? 1 : 0))
-            .putShort((short) 0).putShort((short) 0).putShort((short) width).putShort((short) height).array());
-    }
-
-    // Asks wayvnc to make sway's output the size of the surface (SetDesktopSize).
+    // Asks the server to make the output the size of the space for it.
     private synchronized void resize() {
-        int w = surfaceWidth, h = surfaceHeight;
-        if (screenId < 0 || w == 0 || (w == requestedWidth && h == requestedHeight)) return;
-        requestedWidth = w;
-        requestedHeight = h;
-        send(ByteBuffer.allocate(24).put((byte) 251).put((byte) 0).putShort((short) w).putShort((short) h)
-            .put((byte) 1).put((byte) 0)
-            .putInt(screenId).putShort((short) 0).putShort((short) 0).putShort((short) w).putShort((short) h).putInt(0)
-            .array());
+        if (availableWidth > 0 && availableHeight > 0) send(3, availableWidth, availableHeight, 0);
     }
 
     @Override
-    public void surfaceCreated(SurfaceHolder holder) {
+    public synchronized void surfaceCreated(SurfaceHolder holder) {
+        window = acquireWindow(holder.getSurface());
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        synchronized (this) {
-            surfaceWidth = width;
-            surfaceHeight = height;
-        }
-        resize();
-        requestUpdate(false, fbWidth, fbHeight); // the new surface is empty
+    public synchronized void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        // The new surface is empty.
+        if (window != 0 && frame != 0) draw(window, frame, fbWidth, fbHeight, fbStride, swap, 0, 0, fbWidth, fbHeight);
     }
 
     @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    public synchronized void surfaceDestroyed(SurfaceHolder holder) {
+        releaseWindow(window);
+        window = 0;
     }
 
     private boolean touch(MotionEvent e) {
@@ -287,10 +280,13 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
         return true;
     }
 
+    // buttons: 1 if the left one is pressed.
     private void pointer(int buttons, MotionEvent e) {
-        int x = Math.max(0, Math.min(fbWidth - 1, (int) (e.getX(0) / scale)));
-        int y = Math.max(0, Math.min(fbHeight - 1, (int) (e.getY(0) / scale)));
-        send(ByteBuffer.allocate(6).put((byte) 5).put((byte) buttons).putShort((short) x).putShort((short) y).array());
+        int w = fbWidth, h = fbHeight;
+        if (w == 0) return;
+        int x = Math.max(0, Math.min(w - 1, (int) (e.getX(0) * w / screen.getWidth())));
+        int y = Math.max(0, Math.min(h - 1, (int) (e.getY(0) * h / screen.getHeight())));
+        send(1, buttons, x, y);
     }
 
     private void toggleKeyboard() {
@@ -318,7 +314,7 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
     }
 
     private void key(int keysym, boolean down) {
-        send(ByteBuffer.allocate(8).put((byte) 4).put((byte) (down ? 1 : 0)).putShort((short) 0).putInt(keysym).array());
+        send(2, down ? 1 : 0, keysym, 0);
     }
 
     private static int keysym(int codePoint) {

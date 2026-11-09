@@ -3,8 +3,10 @@
 let
   cfg = config.desktop;
   # The app's "droid-nix desktop" activity (app/.../DesktopActivity.java)
-  # shows the frames from this VNC socket and sends touch and keys back.
+  # gets its frames from droid-nix-desktop-server on this socket and sends
+  # touch and keys back.
   socket = "${androidApp.dataDir}/files/desktop.sock";
+  server = pkgs.callPackage ../pkgs/droid-nix-desktop-server { };
   # fontconfig's defaults (aliases like monospace) and a font for them;
   # there is no /etc/fonts here.
   fontsConf = pkgs.writeText "fonts.conf" ''
@@ -18,7 +20,7 @@ let
   '';
   dbus = pkgs.dbus.out;
   # Default session: headless sway (your ~/.config/sway/config, else sway's
-  # default one) with wayvnc serving it.
+  # default one) with droid-nix-desktop-server.
   sway = pkgs.writeShellScript "droid-nix-desktop-sway" ''
     config=''${XDG_CONFIG_HOME:-$HOME/.config}/sway/config
     [ -e "$config" ] || config=${pkgs.sway}/etc/sway/config
@@ -27,7 +29,7 @@ let
     export PATH=${pkgs.sway}/bin:$PATH
     {
       printf 'include %s\n' "$config"
-      printf 'exec ${pkgs.wayvnc}/bin/wayvnc --unix-socket %s\n' "$DROID_NIX_DESKTOP_SOCKET"
+      printf 'exec ${server}/bin/droid-nix-desktop-server\n'
       [ $# = 0 ] || printf 'exec %s\n' "$(printf '%q ' "$@")"
     } >"$XDG_RUNTIME_DIR/droid-nix-desktop.conf"
     exec ${pkgs.sway}/bin/sway -c "$XDG_RUNTIME_DIR/droid-nix-desktop.conf"
@@ -59,11 +61,13 @@ in
       default = "${sway}";
       description = ''
         Command that starts the desktop, with the arguments of
-        `droid-nix-desktop`. It must serve VNC on the unix socket in
-        `$DROID_NIX_DESKTOP_SOCKET`, e.g. a wlroots compositor with
-        `wayvnc --unix-socket "$DROID_NIX_DESKTOP_SOCKET"`, or for X11
-        `Xvnc -rfbunixpath "$DROID_NIX_DESKTOP_SOCKET"` plus a window
-        manager. Default: headless sway with wayvnc.
+        `droid-nix-desktop`. It must run `droid-nix-desktop-server` in it,
+        which serves the app on the unix socket in
+        `$DROID_NIX_DESKTOP_SOCKET`. That works in Wayland compositors with
+        wlr-screencopy-unstable-v1, wlr-virtual-pointer-unstable-v1 and
+        virtual-keyboard-unstable-v1 (and wlr-output-management-unstable-v1
+        to fit the output to the screen), e.g. wlroots ones; the app shows
+        their first output. Default: headless sway with it.
       '';
     };
   };
@@ -71,6 +75,6 @@ in
   ###### implementation
 
   config = lib.mkIf cfg.enable {
-    environment.packages = [ droid-nix-desktop ];
+    environment.packages = [ droid-nix-desktop server ];
   };
 }
