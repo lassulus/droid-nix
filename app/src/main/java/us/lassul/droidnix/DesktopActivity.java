@@ -42,10 +42,11 @@ import java.nio.ByteOrder;
  * The "droid-nix desktop" icon: shows the sway of `droid-nix-desktop`
  * (modules/desktop.nix) fullscreen. droid-nix-desktop-server
  * (pkgs/droid-nix-desktop-server/server.c, which describes the messages)
- * serves it on files/desktop.sock: it shares a frame buffer with this
- * activity and says which part of it changed; the native draw copies that
- * part into the window. A finger is the left mouse button, keys go as
- * keysyms. A two-finger tap shows or hides the soft keyboard.
+ * serves it on files/desktop.sock: it shares two frame buffers with this
+ * activity and says which one has the next frame and which part of it
+ * changed; the native draw copies that part into the window while the next
+ * frame can go into the other buffer. A finger is the left mouse button,
+ * keys go as keysyms. A two-finger tap shows or hides the soft keyboard.
  */
 public final class DesktopActivity extends Activity implements SurfaceHolder.Callback {
 
@@ -63,13 +64,14 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
     private Screen screen;
     private TextView status;
     // Guarded by this: the connection, the window, the space for the desktop
-    // (the output's size) and the mapped frame buffer. Sending only needs
-    // out, so that touch and keys never wait for a frame being drawn.
+    // (the output's size), the mapped frame buffers and the frame last shown
+    // (its address, 0 if none). Sending only needs out, so that touch and
+    // keys never wait for a frame being drawn.
     private LocalSocket socket;
     private volatile OutputStream out;
     private long window;
     private int availableWidth, availableHeight;
-    private long frame, frameSize;
+    private long frame, frameSize, shown;
     private volatile int fbWidth, fbHeight;
     private int fbStride;
     private boolean swap;
@@ -151,8 +153,7 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
             }
             runOnUiThread(() -> status.setVisibility(View.GONE));
             resize();
-            send(0, 0, 0, 0);
-            byte[] b = new byte[20];
+            byte[] b = new byte[24];
             ByteBuffer m = ByteBuffer.wrap(b).order(ByteOrder.nativeOrder());
             while (true) {
                 for (int n = 0; n < b.length; ) {
@@ -160,7 +161,7 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
                     if (r < 0) throw new EOFException();
                     n += r;
                 }
-                if (m.getInt(0) == 0) { // a new frame buffer
+                if (m.getInt(0) == 0) { // new frame buffers
                     FileDescriptor[] fds = s.getAncillaryFileDescriptors();
                     if (fds == null || fds.length != 1) throw new IOException("no frame buffer");
                     map(s, fds[0], m.getInt(4), m.getInt(8), m.getInt(12), m.getInt(16));
@@ -168,10 +169,11 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
                 } else { // a frame
                     synchronized (this) {
                         if (socket != s) return;
-                        if (window != 0 && frame != 0)
-                            draw(window, frame, fbWidth, fbHeight, fbStride, swap, m.getInt(4), m.getInt(8), m.getInt(12), m.getInt(16));
+                        shown = frame + m.getInt(4) * (long) fbStride * fbHeight;
+                        if (window != 0)
+                            draw(window, shown, fbWidth, fbHeight, fbStride, swap, m.getInt(8), m.getInt(12), m.getInt(16), m.getInt(20));
                     }
-                    send(0, 0, 0, 0);
+                    send(0, 0, 0, 0); // done with it
                 }
             }
         } catch (IOException | ErrnoException | RuntimeException e) {
@@ -183,14 +185,14 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
         }
     }
 
-    // Maps the server's frame buffer instead of the previous one.
+    // Maps the server's frame buffers instead of the previous ones.
     private synchronized void map(LocalSocket s, FileDescriptor fd, int width, int height, int stride, int format)
             throws ErrnoException {
         try {
             if (socket != s) return;
             if (frame != 0) Os.munmap(frame, frameSize);
-            frame = 0;
-            frameSize = (long) stride * height;
+            frame = shown = 0;
+            frameSize = 2L * stride * height;
             frame = Os.mmap(0, frameSize, OsConstants.PROT_READ, OsConstants.MAP_SHARED, fd, 0);
             fbWidth = width;
             fbHeight = height;
@@ -246,8 +248,10 @@ public final class DesktopActivity extends Activity implements SurfaceHolder.Cal
 
     @Override
     public synchronized void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        // The new surface is empty.
-        if (window != 0 && frame != 0) draw(window, frame, fbWidth, fbHeight, fbStride, swap, 0, 0, fbWidth, fbHeight);
+        // The new surface is empty. The server may be capturing a newer frame
+        // into the shown one meanwhile; the frames that follow redraw what
+        // differs.
+        if (window != 0 && shown != 0) draw(window, shown, fbWidth, fbHeight, fbStride, swap, 0, 0, fbWidth, fbHeight);
     }
 
     @Override
