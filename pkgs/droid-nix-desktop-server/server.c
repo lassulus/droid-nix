@@ -3,24 +3,28 @@
  * "droid-nix desktop" (DesktopActivity) and passes its touches and keys back.
  *
  * It is a Wayland client of the compositor and serves the app on the unix
- * socket $DROID_NIX_DESKTOP_SOCKET. For each frame the app asks for, the
- * compositor copies its first output (wlr-screencopy, once something
- * changed) into a memfd that the app maps as well, so the socket only
- * carries small messages. Touch and keys come back as messages and go to
- * the compositor through a virtual pointer and keyboard.
+ * socket $DROID_NIX_DESKTOP_SOCKET. The compositor copies its first output
+ * (wlr-screencopy, once something changed) into one of two buffers in a
+ * memfd that the app maps as well, so the socket only carries small
+ * messages. While the app copies a frame out of one buffer, the next frame
+ * can be captured into the other. Touch and keys come back as messages and
+ * go to the compositor through a virtual pointer and keyboard.
  *
  * Messages are native-endian int32s.
- * Server to app, 5 each:
- *   0 width height stride format  the frame buffer, a memfd sent along with
- *                                 it (SCM_RIGHTS); format is a wl_shm format
- *   1 x y width height            the next frame is in the buffer, changed
- *                                 in this box
+ * Server to app, 6 each:
+ *   0 width height stride format 0  the frame buffers, a memfd sent along
+ *                                   with it (SCM_RIGHTS): buffer 0 at 0,
+ *                                   buffer 1 at stride * height; format is
+ *                                   a wl_shm format
+ *   1 buffer x y width height       a frame is in this buffer, changed in
+ *                                   this box since the previous frame
  * App to server, 4 each:
- *   0 0 0 0                       copy the next frame
- *   1 pressed x y                 the pointer, in buffer pixels, and whether
- *                                 the left button is pressed
- *   2 pressed keysym 0            a key
- *   3 width height 0              make the output this size
+ *   0 0 0 0                         done with the oldest frame it has not
+ *                                   returned yet: its buffer is free again
+ *   1 pressed x y                   the pointer, in buffer pixels, and
+ *                                   whether the left button is pressed
+ *   2 pressed keysym 0              a key
+ *   3 width height 0                make the output this size
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -67,16 +71,23 @@ static int client = -1;
 static int32_t message[4];
 static size_t message_size;
 
-// The frame buffer, shared with the app.
+// The frame buffers, shared with the app: two, so that the compositor
+// copies a frame into one while the app copies the other from the other.
 static int fb = -1;
-static struct wl_buffer *buffer;
+static struct wl_buffer *buffers[2];
 static uint32_t fb_format, fb_width, fb_height, fb_stride;
+// The buffers the app has frames in and has not returned, oldest first;
+// -1 for ones in buffers replaced since. No capture starts before the app
+// returned those, so there are at most two.
+static int given[2];
+static int ngiven;
 
-// The capture in progress, whether the compositor got our buffer for it,
-// whether the app waits for one, and whether the last one was refused (it
-// is retried after the output's next change).
+// The capture in progress and its buffer, whether the compositor got that
+// buffer, and whether the last capture was refused (it is retried after
+// the output's next change).
 static struct zwlr_screencopy_frame_v1 *frame;
-static bool copying, wanted, failed, full;
+static int target;
+static bool copying, failed, full;
 static int32_t damage_x1, damage_y1, damage_x2, damage_y2;
 
 static bool button;
@@ -107,9 +118,9 @@ static uint32_t now(void) {
 	return t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-static void send_message(int32_t type, int32_t a, int32_t b, int32_t c, int32_t d, int fd) {
+static void send_message(int32_t type, int32_t a, int32_t b, int32_t c, int32_t d, int32_t e, int fd) {
 	if (client < 0) return;
-	int32_t m[5] = { type, a, b, c, d };
+	int32_t m[6] = { type, a, b, c, d, e };
 	struct iovec iov = { m, sizeof m };
 	union {
 		char buf[CMSG_SPACE(sizeof(int))];
@@ -131,29 +142,35 @@ static void send_message(int32_t type, int32_t a, int32_t b, int32_t c, int32_t 
 
 static void frame_buffer(void *data, struct zwlr_screencopy_frame_v1 *f, uint32_t format,
 		uint32_t width, uint32_t height, uint32_t stride) {
-	if (!buffer || format != fb_format || width != fb_width || height != fb_height || stride != fb_stride) {
+	if (fb < 0 || format != fb_format || width != fb_width || height != fb_height || stride != fb_stride) {
 		// The app copies these, with or without swapping red and blue.
 		if (format != WL_SHM_FORMAT_ARGB8888 && format != WL_SHM_FORMAT_XRGB8888 &&
 				format != WL_SHM_FORMAT_ABGR8888 && format != WL_SHM_FORMAT_XBGR8888)
 			fail("the compositor's frames are not in a 32 bit RGB format");
-		if (buffer) {
-			wl_buffer_destroy(buffer);
+		if (fb >= 0) {
+			wl_buffer_destroy(buffers[0]);
+			wl_buffer_destroy(buffers[1]);
 			close(fb);
 		}
+		size_t size = (size_t)stride * height;
 		fb = memfd_create("droid-nix-desktop", MFD_CLOEXEC);
 		check(fb, "memfd_create");
-		check(ftruncate(fb, (off_t)stride * height), "ftruncate");
-		struct wl_shm_pool *pool = wl_shm_create_pool(shm, fb, stride * height);
-		buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride, format);
+		check(ftruncate(fb, 2 * size), "ftruncate");
+		struct wl_shm_pool *pool = wl_shm_create_pool(shm, fb, 2 * size);
+		for (int i = 0; i < 2; i++)
+			buffers[i] = wl_shm_pool_create_buffer(pool, i * size, width, height, stride, format);
 		wl_shm_pool_destroy(pool);
 		fb_format = format;
 		fb_width = width;
 		fb_height = height;
 		fb_stride = stride;
-		send_message(0, width, height, stride, format, fb);
+		// The app gets them before frames in them; it returns the old
+		// ones before it looks at these.
+		send_message(0, width, height, stride, format, 0, fb);
+		for (int i = 0; i < ngiven; i++) given[i] = -1;
 		full = true;
 	}
-	zwlr_screencopy_frame_v1_copy_with_damage(f, buffer);
+	zwlr_screencopy_frame_v1_copy_with_damage(f, buffers[target]);
 	copying = true;
 }
 
@@ -179,9 +196,10 @@ static void frame_ready(void *data, struct zwlr_screencopy_frame_v1 *f,
 		uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec) {
 	zwlr_screencopy_frame_v1_destroy(f);
 	frame = NULL;
-	if (full) send_message(1, 0, 0, fb_width, fb_height, -1);
-	else send_message(1, damage_x1, damage_y1, damage_x2 - damage_x1, damage_y2 - damage_y1, -1);
+	if (full) send_message(1, target, 0, 0, fb_width, fb_height, -1);
+	else send_message(1, target, damage_x1, damage_y1, damage_x2 - damage_x1, damage_y2 - damage_y1, -1);
 	full = false;
+	given[ngiven++] = target;
 }
 
 static void frame_failed(void *data, struct zwlr_screencopy_frame_v1 *f) {
@@ -191,8 +209,7 @@ static void frame_failed(void *data, struct zwlr_screencopy_frame_v1 *f) {
 	// size (whose wl_output.done may have come before): a new capture
 	// waits for the next commit, so it can start at once. Without, the
 	// output is disabled: try again once it changes.
-	if (copying) wanted = true;
-	else failed = true;
+	if (!copying) failed = true;
 }
 
 static const struct zwlr_screencopy_frame_v1_listener frame_listener = {
@@ -203,8 +220,21 @@ static const struct zwlr_screencopy_frame_v1_listener frame_listener = {
 	.damage = frame_damage,
 };
 
+// The buffer for the next frame: one the app has no frame in, -1 if it has
+// frames in both or still in replaced ones.
+static int free_buffer(void) {
+	bool used[2] = { false, false };
+	for (int i = 0; i < ngiven; i++) {
+		if (given[i] < 0) return -1;
+		used[given[i]] = true;
+	}
+	return !used[0] ? 0 : !used[1] ? 1 : -1;
+}
+
+// Captures the next frame (once something changed) into a free buffer.
 static void capture(void) {
-	wanted = copying = false;
+	target = free_buffer();
+	copying = false;
 	damage_x1 = damage_y1 = damage_x2 = damage_y2 = 0;
 	frame = zwlr_screencopy_manager_v1_capture_output(screencopy, 0, output);
 	zwlr_screencopy_frame_v1_add_listener(frame, &frame_listener, NULL);
@@ -220,10 +250,7 @@ static void output_mode(void *data, struct wl_output *o, uint32_t flags,
 }
 
 static void output_done(void *data, struct wl_output *o) {
-	if (failed) {
-		failed = false;
-		wanted = true;
-	}
+	failed = false;
 }
 
 static void output_scale(void *data, struct wl_output *o, int32_t factor) {
@@ -237,7 +264,7 @@ static const struct wl_output_listener output_listener = {
 };
 
 static void pointer_event(bool pressed, int32_t x, int32_t y) {
-	if (!buffer) return;
+	if (fb < 0) return;
 	uint32_t time = now();
 	zwlr_virtual_pointer_v1_motion_absolute(pointer, time, x, y, fb_width, fb_height);
 	if (pressed != button) {
@@ -380,7 +407,8 @@ static void drop_client(void) {
 	client = -1;
 	if (frame) zwlr_screencopy_frame_v1_destroy(frame);
 	frame = NULL;
-	wanted = failed = false;
+	failed = false;
+	ngiven = 0;
 	// Nothing stays pressed without the app.
 	if (button) pointer_event(false, 0, 0);
 	for (int k = 8; k < 256; k++)
@@ -396,7 +424,7 @@ static void accept_client(int listener) {
 	// A new screencopy manager: its first frame has everything as damage.
 	if (screencopy) zwlr_screencopy_manager_v1_destroy(screencopy);
 	screencopy = wl_registry_bind(registry, screencopy_name, &zwlr_screencopy_manager_v1_interface, 2);
-	if (buffer) send_message(0, fb_width, fb_height, fb_stride, fb_format, fb);
+	if (fb >= 0) send_message(0, fb_width, fb_height, fb_stride, fb_format, 0, fb);
 }
 
 static void read_client(void) {
@@ -410,7 +438,7 @@ static void read_client(void) {
 	message_size = 0;
 	switch (message[0]) {
 	case 0:
-		wanted = true;
+		if (ngiven) memmove(given, given + 1, --ngiven * sizeof *given);
 		break;
 	case 1:
 		pointer_event(message[1], message[2], message[3]);
@@ -505,6 +533,6 @@ int main(void) {
 		if (wl_display_dispatch_pending(display) < 0) fail("lost the compositor");
 		if (fds[1].revents) accept_client(listener);
 		else if (fds[2].revents) read_client();
-		if (wanted && !frame && client >= 0) capture();
+		if (client >= 0 && !frame && !failed && free_buffer() >= 0) capture();
 	}
 }
