@@ -94,6 +94,14 @@ static bool button;
 // The keymap: keysyms[k] is the keysym of keycode k, for 8 <= k < 8 + keys.
 static xkb_keysym_t keysyms[256];
 static int keys;
+// Its first keys, always there. Without keys that have actions, Xwayland
+// rejects the keymap and keeps a US one: the compositor passes it on with
+// only the interpretations its keys use, so xkbcomp writes no compat map,
+// which Xwayland requires.
+static const xkb_keysym_t first_keysyms[] = {
+	XKB_KEY_Shift_L, XKB_KEY_Control_L, XKB_KEY_Alt_L, XKB_KEY_Super_L,
+};
+#define FIRST_KEYS (int)(sizeof first_keysyms / sizeof *first_keysyms)
 static bool pressed[256];
 // Virtual keyboards' keys do not change the compositor's modifiers: they
 // come from this state of the keymap.
@@ -336,8 +344,8 @@ static void key_event(bool down, xkb_keysym_t keysym) {
 			for (k = 8; k < 256; k++)
 				if (pressed[k]) zwp_virtual_keyboard_v1_key(keyboard, now(), k - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
 			memset(pressed, 0, sizeof pressed);
-			keys = 0;
-			k = 8;
+			keys = FIRST_KEYS;
+			k = 8 + keys;
 		}
 		keysyms[k] = keysym;
 		keys++;
@@ -502,6 +510,9 @@ int main(void) {
 	keyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(keyboard_manager, seat);
 	xkb = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (!xkb) fail("cannot create an xkb context");
+	memcpy(keysyms + 8, first_keysyms, sizeof first_keysyms);
+	keys = FIRST_KEYS;
+	send_keymap();
 
 	struct sockaddr_un address = { .sun_family = AF_UNIX };
 	if (strlen(path) >= sizeof address.sun_path) fail("the socket path is too long");
